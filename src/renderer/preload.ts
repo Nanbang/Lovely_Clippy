@@ -103,13 +103,15 @@ const clippyApi: ClippyApi = {
 
 contextBridge.exposeInMainWorld("clippy", clippyApi);
 
-// ── watcher 통로 ──────────────────────────────
-// 메인 프로세스의 watcher-host 가 보내는 관찰 신호를 화면으로 넘긴다.
+// ── watcher / 창 조작 통로 ────────────────────
 contextBridge.exposeInMainWorld("clippyWatcher", {
   onObservation: (callback: (payload: any) => void) => {
     ipcRenderer.on("clippy-observation", (_e, payload) => callback(payload));
   },
   offObservation: () => {
     ipcRenderer.removeAllListeners("clippy-observation");
+  },
+  moveBy: (dx: number, dy: number) => {
+    ipcRenderer.send("clippy-move-by", { dx, dy });
   },
 });

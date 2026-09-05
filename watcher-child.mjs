@@ -16,6 +16,8 @@ const ITEM_MIN_S = cfg.카운팅.개수_최소초;
 const TH = cfg.임계값_분;
 
 const IGNORE_APPS = ['windows terminal', 'windowsterminal', 'openconsole', 'conhost', 'terminal host'];
+// 클리피 자기 자신 (창 제목 기준. electron.exe 통째로 막으면 디스코드까지 막힘)
+const IGNORE_TITLES = ['clippy', 'chat with clippy', 'clippy chat'];
 
 // ─────────────────────────────────────────────
 //  창 제목 정리 & 분류
@@ -47,6 +49,9 @@ function classify(win) {
 
   if (IGNORE_APPS.some(k => app.toLowerCase().includes(k)))
     return { kind: 'ignore', site: 'terminal', label: app, detail: title, exe };
+
+  if (IGNORE_TITLES.some(k => title.toLowerCase() === k || title.toLowerCase().startsWith(k)))
+    return { kind: 'ignore', site: 'self', label: '클리피', detail: title, exe };
 
   if ((cfg.ignoreTitles || []).some(k => title.toLowerCase().includes(k.toLowerCase())))
     return { kind: 'ignore', site: 'newtab', label: '새 탭', detail: title, exe };

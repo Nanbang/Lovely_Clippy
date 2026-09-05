@@ -11,8 +11,14 @@ export type ChatProps = {
 };
 
 export function Chat({ style }: ChatProps) {
-  const { setAnimationKey, setStatus, status, messages, addMessage } =
-    useChat();
+  const {
+    setAnimationKey,
+    setStatus,
+    status,
+    messages,
+    addMessage,
+    setIsChatWindowOpen,
+  } = useChat();
   const [streamingMessageContent, setStreamingMessageContent] =
     useState<string>("");
   const greetedRef = useRef(false);
@@ -90,11 +96,12 @@ export function Chat({ style }: ChatProps) {
     api.onObservation((payload: any) => {
       console.info("[관찰]", payload.event, payload.label);
       if (busyRef.current) return; // 말하는 중이면 건너뜀
+      setIsChatWindowOpen(true); // 귀찮게 굴어야 하므로 창을 강제로 연다
       runStream(speakUnprompted(payload.text));
     });
 
     return () => api.offObservation?.();
-  }, [runStream]);
+  }, [runStream, setIsChatWindowOpen]);
 
   const handleAbortMessage = () => {
     // 제미나이 스트림 중단은 아직 미구현

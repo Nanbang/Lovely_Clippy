@@ -13,6 +13,7 @@ import { getModelManager } from "./models";
 import { setupAutoUpdater } from "./update";
 import { setupAppMenu } from "./menu";
 import { startWatcher } from "./watcher-host";
+import "./clippy-extras";
 
 async function onReady() {
   console.info(`Welcome to Clippy v${app.getVersion()}`);
