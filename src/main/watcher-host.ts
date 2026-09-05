@@ -31,7 +31,23 @@ export function startWatcher() {
   child.stderr?.on("data", (d) => process.stderr.write(`[watcher] ${d}`));
 
   child.on("message", (msg: any) => {
-    if (!msg || msg.type !== "observation") return;
+    if (!msg) return;
+
+    if (msg.type === "live") {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send("clippy-live", msg);
+      }
+      return;
+    }
+
+    if (msg.type === "state") {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send("clippy-state", msg);
+      }
+      return;
+    }
+
+    if (msg.type !== "observation") return;
 
     console.info(`[watcher] ${msg.event} · ${msg.label} (${msg.score})`);
 

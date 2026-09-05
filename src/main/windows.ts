@@ -61,6 +61,16 @@ export async function createMainWindow() {
     );
   }
 
+  mainWindow.webContents.openDevTools({ mode: "detach" });
+
+  mainWindow.webContents.on("console-message", (_e, _lvl, msg, line, src) => {
+    console.error(`[렌더러] ${src}:${line} — ${msg}`);
+  });
+
+  mainWindow.webContents.on("preload-error", (_e, p, err) => {
+    console.error(`[preload 오류] ${p}`, err);
+  });
+
   mainWindow.on("system-context-menu", (event) => {
     event.preventDefault();
     popupAppMenu();

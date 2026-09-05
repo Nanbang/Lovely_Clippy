@@ -6,10 +6,13 @@ export type BubbleView =
   | "chats"
   | "settings"
   | "settings-general"
+  | "settings-persona"
   | "settings-model"
   | "settings-parameters"
   | "settings-advanced"
-  | "settings-about";
+  | "settings-about"
+  | "settings-debug"
+  | "save";
 
 type BubbleViewContextType = {
   currentView: BubbleView;

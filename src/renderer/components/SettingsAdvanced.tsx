@@ -1,52 +1,19 @@
-import { clippyApi } from "../clippyApi";
-import { useSharedState } from "../contexts/SharedStateContext";
-import { Checkbox } from "./Checkbox";
-
-export const SettingsAdvanced: React.FC = () => {
-  const { settings } = useSharedState();
-
+export function SettingsAdvanced() {
   return (
-    <div>
+    <div style={{ padding: 8 }}>
       <fieldset>
-        <legend>Automatic Updates</legend>
-        <Checkbox
-          id="autoUpdates"
-          label="Automatically keep Clippy up to date"
-          checked={!settings.disableAutoUpdate}
-          onChange={(checked) => {
-            clippyApi.setState("settings.disableAutoUpdate", !checked);
-          }}
-        />
-
-        <button
-          style={{ marginTop: "10px" }}
-          onClick={() => clippyApi.checkForUpdates()}
-        >
-          Check for Updates
-        </button>
-      </fieldset>
-      <fieldset>
-        <legend>Configuration</legend>
-        <p>
-          Clippy keeps its configuration in JSON files. Click these buttons to
-          open them in your default JSON editor. After editing, restart Clippy
-          to apply the changes.
+        <legend>Advanced</legend>
+        <p style={{ marginTop: 4 }}>
+          비어 있습니다. 앞으로 여기에 붙일 것들:
         </p>
-        <button onClick={clippyApi.openStateInEditor}>
-          Open Configuration File
-        </button>
-        <button onClick={clippyApi.openDebugStateInEditor}>
-          Open Debug File
-        </button>
-      </fieldset>
-      <fieldset>
-        <legend>Delete All Models</legend>
-        <p>
-          This will delete all models from Clippy. This action is not
-          reversible.
-        </p>
-        <button onClick={clippyApi.deleteAllModels}>Delete All Models</button>
+        <ul style={{ marginTop: 6, paddingLeft: 20 }}>
+          <li>OpenClaw 게이트웨이 연결과 스킬 권한</li>
+          <li>트리거 조건과 발화 빈도 (지금은 config.json)</li>
+          <li>사이트 등록 목록 편집</li>
+          <li>장기 기억 관리와 초기화</li>
+          <li>사운드</li>
+        </ul>
       </fieldset>
     </div>
   );
-};
+}

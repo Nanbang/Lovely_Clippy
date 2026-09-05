@@ -98,6 +98,9 @@ const visitCount = new Map();         // 화면 제목 -> 오늘 열어본 횟�
 const siteSeconds = new Map();        // 사이트 -> 누적 초 (6초 이상 확정분만)
 
 let pressure = 0, threshold = expo(TARGET_S), lastFire = 0, doubleTapAt = 0;
+let lastStateSent = 0;
+let lastEval = null;   // 디버그 패널용 최근 평가 스냅샷
+let lastRealSeen = 0;
 const usedEvents = new Map();
 let lastRealCtx = null;
 
@@ -123,11 +126,30 @@ function evaluate(now, c) {
   const items = new Set(since(itemLog, 30 * 60 * 1000, now).filter(r => r.site === c.site).map(r => r.item)).size;
   const visits = visitCount.get(c.detail) || 0;
   const cands = [];
+  const t0 = thresholdFor(c);
+
+  // 디버그 패널이 읽어갈 원시 수치
+  const raw = {
+    label: c.label,
+    detail: c.detail,
+    exe: c.exe,
+    stareMin: +stareMin.toFixed(1),
+    stareNeed: TH.화면_고정,
+    siteMin: +siteMin.toFixed(1),
+    siteNeed: t0,
+    items,
+    itemsNeed: 3,
+    unit: c.unit || '페이지',
+    visits,
+    visitsNeed: 3,
+    sw4,
+    sw4Need: 10,
+    night: hour >= 2 && hour < 6,
+  };
 
   if (stareMin > TH.화면_고정)
     cands.push({ ev: 'STARE', score: ramp(stareMin, TH.화면_고정, TH.화면_고정 * 4), anim: 'IdleEyeBrowRaise' });
 
-  const t0 = thresholdFor(c);
   if (siteMin > t0)
     cands.push({ ev: 'SITE_LONG', score: ramp(siteMin, t0, t0 * 6), anim: 'GetAttention' });
 
@@ -140,7 +162,10 @@ function evaluate(now, c) {
   if (sw4 >= 10)
     cands.push({ ev: 'RESTLESS', score: ramp(sw4, 10, 26) * 0.7, anim: 'GetWizardy' });
 
-  if (!cands.length) return null;
+  if (!cands.length) {
+    lastEval = { raw, cands: [] };
+    return null;
+  }
 
   const night = (hour >= 2 && hour < 6) ? 1.6 : 1;
   for (const x of cands) {
@@ -149,7 +174,13 @@ function evaluate(now, c) {
     x.score *= Math.min(1, 0.15 + 0.85 * (ago / (FAST ? 90 : 2400)));
   }
 
-  return cands.filter(x => x.score > 0.05).sort((a, b) => b.score - a.score)[0] || null;
+  const sorted = cands.slice().sort((a, b) => b.score - a.score);
+  lastEval = {
+    raw,
+    cands: sorted.map(x => ({ ev: x.ev, score: +x.score.toFixed(3) })),
+  };
+
+  return sorted.filter(x => x.score > 0.05)[0] || null;
 }
 
 // ─────────────────────────────────────────────
@@ -191,7 +222,7 @@ function describe(c, cand) {
   const part = h < 5 ? '새벽' : h < 12 ? '오전' : h < 18 ? '오후' : h < 23 ? '저녁' : '밤늦게';
   rows.push(`지금 대략 ${part} ${h % 12 || 12}시쯤`);
 
-  return '[관찰 데이터] — 이 숫자들만 사용 가능. 없는 수치는 절대 지어내지 말 것.\n'
+  return '[배경 — 네가 아는 것은 이게 전부다. 여기 없는 건 모른다.]\n'
     + rows.map(r => '- ' + r).join('\n');
 }
 
@@ -203,7 +234,7 @@ function describe(c, cand) {
 //  발화
 // ─────────────────────────────────────────────
 
-function fire(now, c, cand) {
+function fire(now, c, cand, forced = false) {
   usedEvents.set(cand.ev, now);
   lastFire = now; pressure = 0; threshold = expo(TARGET_S);
 
@@ -215,6 +246,7 @@ function fire(now, c, cand) {
     detail: c.detail,
     exe: c.exe,
     unsafeOverlay: !!c.unsafeOverlay,
+    forced,
     text: describe(c, cand),
     at: now,
   };
@@ -237,11 +269,46 @@ async function tick() {
   if (!win) return;
 
   const c = classify(win);
+
+  // 15초마다 '지금 화면'을 알려준다. 클리피 창이나 터미널을 보고 있으면
+  // 직전에 보던 진짜 화면을 대신 보고한다. ("나한테 말 걸기 전에 뭘 보고 있었나")
+  if (now - lastStateSent > 15000) {
+    lastStateSent = now;
+    const target = c.kind === 'ignore' ? lastRealCtx : c;
+
+    if (!target) {
+      // 앱 켜자마자 클리피 창만 보고 있으면 '직전 화면'이 아예 없다.
+      // 그래도 뭔가 보내야 대사 쪽 판정이 돌아간다.
+      process.send?.({
+        type: 'state',
+        summary: '아직 다른 창을 본 적 없음 (앱 켠 뒤로 클리피 창만 활성)',
+      });
+    } else {
+      const mins = Math.round((now - siteStart) / 60000);
+      const bits = [`${target.label}`];
+      if (target.detail && target.detail !== target.label) bits.push(`창 제목: ${target.detail}`);
+      bits.push(`프로그램: ${target.exe}`);
+      if (mins >= 1) bits.push(`${mins}분째`);
+      if (c.kind === 'ignore') {
+        const ago = Math.round((now - lastRealSeen) / 60000);
+        bits.push(ago >= 1
+          ? `(${ago}분 전 기준 — 지금은 클리피 창을 보는 중이라 그 뒤로는 모름)`
+          : '(방금 전 기준 — 지금은 클리피 창을 보는 중)');
+      }
+      process.send?.({ type: 'state', summary: bits.join(' · ') });
+    }
+  }
+
+  // 무시 대상(클리피 자기 창, 터미널)이면 여기서 끝낸다.
+  // 아래 타이머 갱신보다 먼저 빠져나가야 한다. 안 그러면 클리피 창을 한 번
+  // 클릭할 때마다 원래 보던 화면의 체류 시간이 0으로 리셋된다.
+  if (c.kind === 'ignore') return;
+
   const sKey = `${c.kind}:${c.site}`;
   const dKey = `${sKey}|${c.detail}`;
 
   if (sKey !== siteKey) {
-    if (siteKey && !siteKey.startsWith('ignore:') && c.kind !== 'ignore') switches.push(now);
+    if (siteKey) switches.push(now);
     siteKey = sKey; siteStart = now;
   }
   if (dKey !== detailKey) {
@@ -249,8 +316,8 @@ async function tick() {
     dwellCounted = false; itemCounted = false;
   }
 
-  if (c.kind === 'ignore') return;
   lastRealCtx = c;
+  lastRealSeen = now;
 
   const held = (now - detailStart) / 1000;
 
@@ -272,6 +339,19 @@ async function tick() {
   }
 
   const cand = evaluate(now, c);
+
+  // 디버그 패널용 실시간 상태 (대사 프롬프트와는 무관)
+  process.send?.({
+    type: 'live',
+    at: now,
+    raw: lastEval?.raw || null,
+    cands: lastEval?.cands || [],
+    pressure: +pressure.toFixed(1),
+    threshold: +threshold.toFixed(1),
+    gapLeft: Math.max(0, Math.round(MIN_GAP_S - (now - lastFire) / 1000)),
+    fast: FAST,
+  });
+
   if (!cand) return;
   pressure += cand.score * (POLL_MS / 1000);
 
@@ -291,7 +371,7 @@ process.on('message', (msg) => {
       detail: '', exe: 'explorer.exe', unit: '화면',
     };
     const cand = evaluate(now, c) || { ev: 'FORCED', score: 1, anim: 'GetAttention' };
-    fire(now, c, cand);
+    fire(now, c, cand, true);
   }
 });
 

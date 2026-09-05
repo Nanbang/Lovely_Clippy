@@ -5,10 +5,13 @@ import { Chat } from "./Chat";
 import { Settings } from "./Settings";
 import { useBubbleView } from "../contexts/BubbleViewContext";
 import { Chats } from "./Chats";
+import { SaveDialog } from "./SaveDialog";
 
 export function Bubble() {
   const { currentView, setCurrentView } = useBubbleView();
   const [isMaximized, setIsMaximized] = useState(false);
+  // 이 세션이 시작된 시각. 요약에 기록된다.
+  const [sessionStartedAt] = useState(() => Date.now());
 
   const containerStyle = {
     width: "calc(100% - 6px)",
@@ -39,6 +42,13 @@ export function Bubble() {
     content = <Settings onClose={() => setCurrentView("chat")} />;
   } else if (currentView === "chats") {
     content = <Chats onClose={() => setCurrentView("chat")} />;
+  } else if (currentView === "save") {
+    content = (
+      <SaveDialog
+        onClose={() => setCurrentView("chat")}
+        sessionStartedAt={sessionStartedAt}
+      />
+    );
   }
 
   const handleSettingsClick = useCallback(() => {
@@ -81,6 +91,18 @@ export function Bubble() {
             onClick={handleSettingsClick}
           >
             Settings
+          </button>
+          <button
+            style={{
+              marginRight: "8px",
+              paddingLeft: "8px",
+              paddingRight: "8px",
+            }}
+            onClick={() =>
+              setCurrentView(currentView === "save" ? "chat" : "save")
+            }
+          >
+            Save
           </button>
           <button
             aria-label="Minimize"

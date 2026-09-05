@@ -111,6 +111,21 @@ contextBridge.exposeInMainWorld("clippyWatcher", {
   offObservation: () => {
     ipcRenderer.removeAllListeners("clippy-observation");
   },
+  onState: (callback: (payload: any) => void) => {
+    ipcRenderer.on("clippy-state", (_e, payload) => callback(payload));
+  },
+  offState: () => {
+    ipcRenderer.removeAllListeners("clippy-state");
+  },
+  onLive: (callback: (payload: any) => void) => {
+    ipcRenderer.on("clippy-live", (_e, payload) => callback(payload));
+  },
+  offLive: () => {
+    ipcRenderer.removeAllListeners("clippy-live");
+  },
+  quit: () => {
+    ipcRenderer.send("clippy-quit");
+  },
   moveBy: (dx: number, dy: number) => {
     ipcRenderer.send("clippy-move-by", { dx, dy });
   },

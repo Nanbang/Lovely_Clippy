@@ -8,8 +8,16 @@ import { SettingsAdvanced } from "./SettingsAdvanced";
 import { SettingsAppearance } from "./SettingsAppearance";
 import { SettingsAbout } from "./SettingsAbout";
 import { SettingsParameters } from "./SettingsParameters";
+import { SettingsPersona } from "./SettingsPersona";
+import { SettingsDebug } from "./SettingsDebug";
 
-export type SettingsTab = "appearance" | "model" | "advanced" | "about";
+export type SettingsTab =
+  | "persona"
+  | "appearance"
+  | "model"
+  | "advanced"
+  | "about"
+  | "debug";
 
 export type SettingsProps = {
   onClose: () => void;
@@ -30,11 +38,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
   }, [currentView, activeTab]);
 
   const tabs = [
+    { label: "Persona", key: "persona", content: <SettingsPersona /> },
     { label: "Appearance", key: "appearance", content: <SettingsAppearance /> },
     { label: "Model", key: "model", content: <SettingsModel /> },
     { label: "Parameters", key: "parameters", content: <SettingsParameters /> },
     { label: "Advanced", key: "advanced", content: <SettingsAdvanced /> },
     { label: "About", key: "about", content: <SettingsAbout /> },
+    { label: "Debug", key: "debug", content: <SettingsDebug /> },
   ];
 
   return (
@@ -64,11 +74,13 @@ function bubbleViewToSettingsTab(view: BubbleView): SettingsTab {
 
   const settingsTab = view.replace(/settings-?/, "");
   const settingsTabs = [
+    "persona",
     "appearance",
     "model",
     "parameters",
     "advanced",
     "about",
+    "debug",
   ] as const;
 
   if (settingsTabs.includes(settingsTab as SettingsTab)) {

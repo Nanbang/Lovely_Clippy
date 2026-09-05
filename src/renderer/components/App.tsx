@@ -4,6 +4,7 @@ import "./css/98.extended.css";
 import "./css/Theme.css";
 
 import { Clippy } from "./Clippy";
+import { WatcherBridge } from "./WatcherBridge";
 import { ChatProvider } from "../contexts/ChatContext";
 import { WindowPortal } from "./WindowPortal";
 import { Bubble } from "./BubbleWindow";
@@ -31,6 +32,7 @@ export function App() {
                 height: "100%",
               }}
             >
+              <WatcherBridge />
               <Clippy />
               <WindowPortal width={450} height={650}>
                 <Bubble />
