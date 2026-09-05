@@ -225,7 +225,12 @@ const config: ForgeConfig = {
       mergeASARs: true,
     },
   },
-  rebuildConfig: {},
+  rebuildConfig: {
+    // get-windows 는 별도 Node 프로세스(watcher-child.mjs)에서만 쓰이고
+    // 윈도우에서는 미리 빌드된 보조 실행파일을 사용하므로 재빌드 대상에서 제외한다.
+    // (재빌드하려 들면 Visual Studio C++ 빌드 도구를 요구한다)
+    ignoreModules: ["get-windows"],
+  },
   makers: [
     new MakerSquirrel(
       (arch) => ({
