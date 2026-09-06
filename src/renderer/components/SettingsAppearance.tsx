@@ -2,9 +2,24 @@ import { DEFAULT_SETTINGS, SettingsState } from "../../sharedState";
 import { clippyApi } from "../clippyApi";
 import { useSharedState } from "../contexts/SharedStateContext";
 import { Checkbox } from "./Checkbox";
+import { useState } from "react";
+import {
+  listSoundedAnimations,
+  loadSoundSettings,
+  previewSound,
+  saveSoundSettings,
+} from "../soundPlayer";
+import { playAnimationSounds } from "../soundPlayer";
 
 export const SettingsAppearance: React.FC = () => {
   const { settings } = useSharedState();
+  const [sound, setSound] = useState(loadSoundSettings());
+
+  const updateSound = (patch: Partial<typeof sound>) => {
+    const next = { ...sound, ...patch };
+    setSound(next);
+    saveSoundSettings(next);
+  };
 
   const onChangeFontSize = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newSize = parseInt(event.target.value, 10);
@@ -60,6 +75,50 @@ export const SettingsAppearance: React.FC = () => {
           }}
         />
       </fieldset>
+      <fieldset>
+        <legend>소리</legend>
+        <Checkbox
+          id="soundEnabled"
+          label="애니메이션 효과음 재생 (오피스 원본 사운드)"
+          checked={sound.enabled}
+          onChange={(checked) => updateSound({ enabled: checked })}
+        />
+
+        <div className="field-row" style={{ gap: 6, marginTop: 6 }}>
+          <label style={{ width: 60 }}>음량</label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={sound.volume}
+            disabled={!sound.enabled}
+            style={{ flex: 1 }}
+            onChange={(e) => updateSound({ volume: Number(e.target.value) })}
+          />
+          <span style={{ width: 40, textAlign: "right" }}>
+            {Math.round(sound.volume * 100)}%
+          </span>
+        </div>
+
+        <div className="field-row" style={{ gap: 6, marginTop: 6 }}>
+          <button disabled={!sound.enabled} onClick={() => previewSound("15")}>
+            소리 한 번
+          </button>
+          <button
+            disabled={!sound.enabled}
+            onClick={() => playAnimationSounds("Greeting")}
+          >
+            Greeting 전체
+          </button>
+        </div>
+
+        <div style={{ marginTop: 6, fontSize: "0.9em" }}>
+          원본은 프레임마다 소리가 붙어 있어서 한 동작에 여러 번 납니다.
+          소리가 있는 동작은 {listSoundedAnimations().length}개입니다.
+        </div>
+      </fieldset>
+
       <fieldset>
         <legend>Font Options</legend>
         <div className="field-row" style={{ width: 300 }}>

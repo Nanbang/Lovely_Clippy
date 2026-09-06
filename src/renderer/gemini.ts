@@ -7,6 +7,13 @@ import { getActiveConnection, checkConnection } from "./connections";
 import { loadParams } from "./params";
 import { logDebug } from "./debugLog";
 import { buildMemoryBlock } from "./memories";
+import {
+  applyDelta,
+  buildEmotionBlock,
+  loadEmotions,
+  timeSinceLastSeen,
+  touchLastSeen,
+} from "./emotions";
 
 type Turn = { role: "user" | "model"; parts: { text: string }[] };
 
@@ -29,6 +36,23 @@ const OCCASION_KO: Record<Occasion, string> = {
 };
 
 let lastOccasion: Occasion | null = null;
+let lastInner = "";   // 직전 발화의 속마음. 판정에만 쓰고 대사 프롬프트엔 안 넣는다.
+
+export function getLastInner() {
+  return lastInner;
+}
+
+function extractInner(text: string): string {
+  const grab = (tag: string) => {
+    const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+    return m ? m[1].trim() : "";
+  };
+  const past = grab("past");
+  const now = grab("now");
+  const want = grab("want");
+  if (!past && !now && !want) return "";
+  return `과거: ${past || "(없음)"}\n현재: ${now || "(없음)"}\n바람: ${want || "(없음)"}`;
+}
 let lastSpokeAt = 0;   // 클리피가 마지막으로 말한 시각
 let lastUserAt = 0;    // 사용자가 마지막으로 말한 시각
 let pendingOccasion: Occasion | null = null;
@@ -41,11 +65,13 @@ function hhmm(t: number): string {
 }
 
 function gapWords(ms: number): string {
-  const m = Math.round(ms / 60000);
-  if (ms < 15000) return "바로";
-  if (ms < 90000) return "조금 뒤에";
-  if (m < 10) return "한참 뒤에";
-  if (m < 60) return "아주 한참 뒤에";
+  const s = ms / 1000;
+  if (s < 10) return "바로";
+  if (s < 30) return "금방";
+  if (s < 120) return "잠깐 뒤에";
+  if (s < 300) return "좀 있다가";
+  if (s < 1200) return "한참 뒤에";
+  if (s < 3600) return "아주 한참 뒤에";
   return "한나절 만에";
 }
 
@@ -97,6 +123,15 @@ export function resetHistory() {
   pendingOccasion = null;
 }
 
+const INNER_BLOCK = `
+
+## Inner thoughts (never shown to the user)
+After your line, on new lines, add exactly these three tags. Korean, one short sentence each.
+<past>what still lingers from earlier — a grudge, a warm moment, or nothing at all</past>
+<now>how you actually read this moment, not how you played it</now>
+<want>what you are hoping happens next</want>
+Be honest here. This is not performance. If nothing lingers, say so plainly.`;
+
 const ANIMATION_BLOCK = `
 
 ## Animation
@@ -110,8 +145,12 @@ function systemPrompt(): string | null {
   const card = getActiveCard();
   if (!card) return null;
 
-  let s = card.text;
+  // ── 고정 블록 ──────────────────────────────
+  // 여기까지는 세션 내내 안 변한다. 프롬프트 캐싱이 걸리는 구간이므로
+  // 매번 바뀌는 것(시각, 기억, 상태)을 절대 이 위로 올리지 말 것.
+  let s = card.text + ANIMATION_BLOCK + INNER_BLOCK;
 
+  // ── 변하는 블록 ────────────────────────────
   s += buildMemoryBlock();
 
   if (pinned.length) {
@@ -120,14 +159,23 @@ function systemPrompt(): string | null {
       .join("\n")}`;
   }
 
-  // 화면 정보는 여기 넣지 않는다.
-  // 시스템 프롬프트에 들어 있으면 규칙으로 아무리 눌러도 결국 꺼내 쓴다.
-  // 물어봤을 때만 그 메시지에 붙여서 보낸다. (sendMessage 참고)
   if (loadParams().screenAwareness === "always" && currentScreen) {
     s += `\n\n(Screen right now: ${currentScreen})`;
   }
 
-  return s + ANIMATION_BLOCK;
+  s += buildEmotionBlock();
+
+  // 시각은 매분 바뀌므로 반드시 맨 뒤
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][now.getDay()];
+  s += `\n\n## 지금\n` +
+    `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 (${dow}) ${hh}:${mm}\n` +
+    `이건 배경 정보다. 물어보면 답하고, 시간대나 요일에 어울리는 태도를 취해도 좋다.\n` +
+    `굳이 매번 날짜나 시간을 입에 담을 필요는 없다.`;
+
+  return s;
 }
 
 async function* callGemini(): AsyncGenerator<string> {
@@ -163,6 +211,9 @@ async function* callGemini(): AsyncGenerator<string> {
     generationConfig: {
       maxOutputTokens: params.maxOutputTokens,
       temperature: params.temperature,
+      // 모델이 대화 전체를 대본처럼 이어 쓰는 사고를 막는다.
+      // 이 문자열이 나오면 그 지점에서 생성을 끊는다.
+      stopSequences: ["\n사용자:", "\n[관찰", "<div", "[SYSTEM"],
     },
   };
   if (thinkingSupported) {
@@ -234,7 +285,9 @@ async function* callGemini(): AsyncGenerator<string> {
   }
 
   if (full) {
-    history.push({ role: "model", parts: [{ text: full }] });
+    lastInner = extractInner(full);
+    const cleaned = full.replace(/<(past|now|want)>[\s\S]*?<\/\1>/g, "").trim();
+    history.push({ role: "model", parts: [{ text: cleaned || full }] });
     lastSpokeAt = Date.now();
     if (pendingOccasion) {
       lastOccasion = pendingOccasion;
@@ -272,83 +325,6 @@ const ASKS_ABOUT_SCREEN =
  * 이 메시지에 답하려면 화면을 알아야 하는지 모델에게 물어본다.
  * 답이 세 글자라 거의 공짜다. 실패하면 정규식으로 떨어진다.
  */
-async function needsScreen(message: string): Promise<boolean> {
-  const conn = getActiveConnection();
-  if (!conn?.apiKey) {
-    logDebug("오류", "판정 건너뜀 — API 키 없음", "설정 > Model 에서 키를 넣으세요.");
-    return ASKS_ABOUT_SCREEN.test(message);
-  }
-
-  // 직전 몇 턴을 같이 줘서 "그거 뭐였지?" 같은 것도 잡히게
-  const recent = history
-    .slice(-4)
-    .map((t) => `${t.role === "user" ? "사용자" : "클리피"}: ${t.parts[0]?.text || ""}`)
-    .join("\n")
-    .slice(-1200);
-
-  const prompt =
-    `사용자의 마지막 발언이 "지금 내 컴퓨터 화면에 뭐가 떠 있는지"를 묻고 있는가?\n\n` +
-    `YES 는 아주 좁게 판단하라. 다음 경우에만 YES 다:\n` +
-    `- 지금 자기가 뭘 하고 있는지 맞혀보라거나 확인해 달라고 함\n` +
-    `- 화면, 창, 프로그램, 탭에 대해 직접 물음\n` +
-    `- 조금 전에 자기가 보던 것을 다시 짚어 달라고 함\n\n` +
-    `그 외에는 전부 NO 다. 특히 다음은 무조건 NO:\n` +
-    `- 인사, 잡담, 감탄사, 욕, 단답 ("하이", "응", "아니", "야", "됐어")\n` +
-    `- 감정 표현이나 농담\n` +
-    `- 앞선 대화에서 화면 얘기가 나왔다는 이유만으로는 YES 가 아니다\n` +
-    `- 화면을 알면 대사가 더 재밌어질 것 같다는 이유도 YES 가 아니다\n` +
-    `묻지 않았으면 NO 다.\n\n` +
-    `[맥락 참고용 최근 대화]\n${recent}\n\n` +
-    `[판단 대상 — 마지막 발언]\n${message}\n\n` +
-    `YES 또는 NO 한 단어만 출력하라.`;
-
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${conn.model}` +
-        `:generateContent?key=${conn.apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 600,
-            temperature: 0,
-            thinkingConfig: { thinkingLevel: "minimal" },
-          },
-        }),
-      },
-    );
-
-    if (!res.ok) {
-      const body = await res.text();
-      logDebug("오류", `판정 호출 실패 (${res.status}) — 정규식으로 대체`, body.slice(0, 500));
-      return ASKS_ABOUT_SCREEN.test(message);
-    }
-
-    const data = await res.json();
-    const answer = (data?.candidates?.[0]?.content?.parts || [])
-      .map((p: any) => p.text || "")
-      .join("")
-      .trim()
-      .toUpperCase();
-
-    logDebug(
-      "판정",
-      `화면 필요? → ${answer || "(빈 응답)"}`,
-      `[보낸 질문]\n${prompt}\n\n[모델 답]\n${answer || "(비어 있음)"}`,
-    );
-
-    if (answer.includes("YES")) return true;
-    if (answer.includes("NO")) return false;
-    return ASKS_ABOUT_SCREEN.test(message);
-  } catch (e: any) {
-    console.warn("화면 필요 판정 실패, 정규식으로 대체:", e);
-    logDebug("오류", "판정 호출 실패 — 정규식으로 대체", String(e?.message || e));
-    return ASKS_ABOUT_SCREEN.test(message);
-  }
-}
-
 /**
  * 대사에 나온 숫자가 대화 어디에도 없으면 디버그에 경고를 남긴다.
  * 막지는 않는다. 어떤 표현에서 새는지 보려는 용도.
@@ -368,20 +344,162 @@ function warnAboutNumbers(line: string, sent: Turn[]) {
   );
 }
 
+type Judgment = { needScreen: boolean; dAttach: number; dSulk: number };
+
+const fmt = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2);
+
+/**
+ * 판정 한 번으로 두 가지를 본다.
+ *  1) 이 발언에 답하려면 화면을 알아야 하는가
+ *  2) 클리피의 속마음이 실제 맥락에 비춰 타당한가 → 감정 수치 변화
+ *
+ * 시스템 프롬프트를 그대로 재사용해서 캐시를 태운다.
+ */
+async function judge(message: string, occasion: "reply" | "greet" = "reply"): Promise<Judgment> {
+  const fallback: Judgment = {
+    needScreen: ASKS_ABOUT_SCREEN.test(message),
+    dAttach: 0,
+    dSulk: 0,
+  };
+
+  const conn = getActiveConnection();
+  if (!conn?.apiKey) {
+    logDebug("오류", "판정 건너뜀 — API 키 없음", "설정 > Model 에서 키를 넣으세요.");
+    return fallback;
+  }
+
+  const sys = systemPrompt();
+  const recent = history
+    .slice(-10)
+    .map((t) => `${t.role === "user" ? "사용자" : "클리피"}: ${t.parts[0]?.text || ""}`)
+    .join("\n")
+    .slice(-4000);
+
+  const e = loadEmotions();
+
+  const prompt =
+    `너는 위 캐릭터(클리피)를 관리하는 심판이다. 연기하지 말고 판정만 하라.\n` +
+    `위 시스템 지침에 이 사람과 지낸 기록이 들어 있다. 관계의 온도를 잴 때 그것도 참고하라.\n\n` +
+    `[최근 대화]\n${recent}\n\n` +
+    (occasion === "greet"
+      ? `[상황] 사용자가 방금 앱을 켰다. 아직 아무 말도 하지 않았다.\n` +
+        `마지막으로 만난 뒤: ${timeSinceLastSeen()}\n` +
+        `오래 비웠으면 삐짐이 오르고 애착이 조금 식는다.\n` +
+        `금방 다시 왔으면 삐짐이 내리고 애착이 오른다.\n` +
+        `SCREEN 은 무조건 NO 다.\n\n`
+      : `[판단 대상 — 사용자의 마지막 발언]\n${message}\n\n`) +
+    (lastInner
+      ? `[클리피가 직전에 품었던 속마음]\n${lastInner}\n\n`
+      : `[클리피가 직전에 품었던 속마음]\n(없음)\n\n`) +
+    `[현재 감정 수치] 애착 ${e.attachment.toFixed(1)}/10, 삐짐 ${e.sulk.toFixed(1)}/10\n\n` +
+    `아래 세 가지를 판정하라.\n\n` +
+    `1) SCREEN — 마지막 발언에 답하려면 지금 화면에 뭐가 떠 있는지 알아야 하는가?\n` +
+    `   마지막 발언 하나만 보고 판단하라. 앞선 대화는 무시하라.\n` +
+    `   YES 는 아주 좁게: 지금 뭘 하는지 맞혀보라거나, 화면·창·프로그램·탭을 직접 묻거나,\n` +
+    `   조금 전에 보던 걸 다시 짚어달라고 할 때만.\n` +
+    `   인사, 잡담, 감탄사, 욕, 단답, 감정 표현, 농담은 전부 NO.\n\n` +
+    `2) SULK — 삐짐 수치를 얼마나 움직일까? -1 ~ +1 사이, 0.5 단위.\n` +
+    `   기본값은 0 이다. 웬만한 대화는 아무것도 바꾸지 않는다.\n` +
+    `   농담, 가벼운 투정, 툭툭거리는 말투는 이 둘의 평소 대화 방식이다. 0 이다.\n` +
+    `   +0.5 는 진짜로 냉대받았을 때. 무시당했거나, 쫓아내려 하거나, 대놓고 짜증냈을 때.\n` +
+    `   속마음의 서운함에 실제 근거가 없으면 올리지 마라.\n` +
+    `   사용자가 다정하거나 관심을 보였으면 내린다.\n\n` +
+    `3) ATTACH — 애착 수치를 얼마나 움직일까? -1 ~ +1 사이, 0.5 단위.\n` +
+    `   기본값은 0 이다. 대부분의 대화는 아무것도 바꾸지 않는다.\n` +
+    `   +0.5 는 진짜로 마음이 움직인 순간에만 준다.\n` +
+    `   함께 있어달라는 말, 진심 어린 칭찬, 속내를 털어놓는 것, 오래 곁에 있어준 것.\n` +
+    `   +1 은 아주 드물다. 관계가 확 달라지는 순간에만.\n` +
+    `   내리는 것도 마찬가지로 드물다. 진짜로 차갑게 굴거나 쫓아냈을 때만 -0.5.\n` +
+    `   농담으로 티격태격하는 건 관계가 나빠진 게 아니다. 0 이다.\n\n` +
+    `출력 형식을 정확히 지켜라. 다른 말은 쓰지 마라.\n` +
+    `SCREEN: YES 또는 NO\n` +
+    `SULK: 숫자\n` +
+    `ATTACH: 숫자`;
+
+  try {
+    const body: any = {
+      contents: [...history.slice(-10), { role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 800,
+        temperature: 0,
+        thinkingConfig: { thinkingLevel: "minimal" },
+      },
+    };
+    if (sys) body.system_instruction = { parts: [{ text: sys }] };
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${conn.model}` +
+        `:generateContent?key=${conn.apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (!res.ok) {
+      const txt = await res.text();
+      logDebug("오류", `판정 실패 (${res.status}) — 정규식으로 대체`, txt.slice(0, 500));
+      return fallback;
+    }
+
+    const data = await res.json();
+    const answer = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p: any) => p.text || "")
+      .join("")
+      .trim();
+
+    const screen = /SCREEN:\s*YES/i.test(answer)
+      ? true
+      : /SCREEN:\s*NO/i.test(answer)
+        ? false
+        : ASKS_ABOUT_SCREEN.test(message);
+
+    const num = (tag: string) => {
+      const m = answer.match(new RegExp(tag + "\\s*:\\s*([+-]?\\d+(?:\\.\\d+)?)", "i"));
+      return m ? Number(m[1]) : 0;
+    };
+
+    const result: Judgment = {
+      needScreen: screen,
+      dSulk: num("SULK"),
+      dAttach: num("ATTACH"),
+    };
+
+    logDebug(
+      "판정",
+      `화면 ${result.needScreen ? "YES" : "NO"} · 삐짐 ${result.dSulk >= 0 ? "+" : ""}${result.dSulk} · 애착 ${result.dAttach >= 0 ? "+" : ""}${result.dAttach}`,
+      `[클리피 속마음]\n${lastInner || "(없음)"}\n\n` +
+        `[보낸 질문]\n${prompt}\n\n[모델 답]\n${answer || "(빈 응답)"}\n\n` +
+        `${"=".repeat(40)}\n[같이 보낸 시스템 지침 — 카드·기억·감정 포함]\n${sys || "(없음)"}`,
+    );
+
+    return result;
+  } catch (e: any) {
+    console.warn("판정 실패:", e);
+    logDebug("오류", "판정 호출 오류 — 정규식으로 대체", String(e?.message || e));
+    return fallback;
+  }
+}
+
 /** 사용자가 채팅으로 말을 걸었을 때 */
 export async function* sendMessage(message: string): AsyncGenerator<string> {
   const mode = loadParams().screenAwareness;
   let text = message;
 
-  if (mode === "onAsk" && !currentScreen) {
-    logDebug(
-      "오류",
-      "판정 안 함 — watcher 화면 정보가 아직 없음",
-      "watcher 가 아직 화면을 보고하지 않았습니다. 앱을 켠 직후이거나 watcher 가 죽었을 수 있습니다.",
-    );
-  }
+  const verdict = await judge(message);
+  const applied = applyDelta(verdict.dAttach, verdict.dSulk);
+  logDebug(
+    "판정",
+    `감정 반영 · 애착 ${fmt(applied.appliedAttach)} → ${applied.emotions.attachment.toFixed(2)}` +
+      ` · 삐짐 ${fmt(applied.appliedSulk)} → ${applied.emotions.sulk.toFixed(2)}`,
+    `판정이 낸 값: 애착 ${fmt(verdict.dAttach)}, 삐짐 ${fmt(verdict.dSulk)}\n` +
+      `실제 반영된 값: 애착 ${fmt(applied.appliedAttach)}, 삐짐 ${fmt(applied.appliedSulk)}\n\n` +
+      `애착은 높을수록 오르기 어렵고 떨어지기도 어렵게 저항이 걸립니다.\n` +
+      `하루 상승 총량에도 상한이 있습니다.`,
+  );
 
-  if (mode === "onAsk" && currentScreen && (await needsScreen(message))) {
+  if (mode === "onAsk" && currentScreen && verdict.needScreen) {
     console.info("[화면 정보 첨부]", currentScreen);
     logDebug("관찰", "화면 정보를 메시지에 붙임", `사용자: ${message}\n\n첨부: ${currentScreen}`);
     text += `\n\n[SYSTEM] 네가 아는 것은 아래 한 줄이 전부다.
@@ -392,26 +510,22 @@ export async function* sendMessage(message: string): AsyncGenerator<string> {
 
   const now = Date.now();
 
-  // 클리피가 먼저 말을 걸어놓고 기다린 경우, 얼마나 기다렸는지 알려준다.
-  // 숫자는 주지 않는다. 등급만 준다.
   if (lastSpokeAt > lastUserAt && lastOccasion && lastOccasion !== "reply") {
     const waited = gapWords(now - lastSpokeAt);
-    text +=
-      waited === "바로"
-        ? `\n\n[SYSTEM] 참고: 네가 먼저 말을 걸자마자 이 사람이 바로 대답했다. ` +
-          `기다릴 필요도 없었다. 톤에만 반영해라.`
-        : `\n\n[SYSTEM] 참고: 네가 먼저 말을 건 뒤 이 사람이 ${waited} 대답했다. ` +
-          `톤에만 반영해라. 대놓고 따지지는 마라.`;
+    text =
+      `[SYSTEM] 배경: 네가 먼저 말을 건 뒤 이 사람이 ${waited} 대답했다.\n` +
+      `언급할지 말지는 네 기분에 맡긴다. 등급 표현을 그대로 옮기지는 마라.\n\n` +
+      text;
   }
 
   lastUserAt = now;
   pendingOccasion = "reply";
+  touchLastSeen();
 
   history.push({ role: "user", parts: [{ text }] });
   yield* callGemini();
 }
 
-/** 트리거가 발동했을 때 — 클리피가 먼저 말함 */
 export function speakUnprompted(observation: string): AsyncGenerator<string> {
   pendingOccasion = "trigger";
   history.push({
@@ -462,11 +576,55 @@ export function summoned(observation: string): AsyncGenerator<string> {
   return callGemini();
 }
 
-/** 앱 켰을 때 첫 인사. 저장된 기억을 읽고 상황에 맞게 지어낸다. */
-export function greet(): AsyncGenerator<string> {
+/** 앱 켰을 때 첫 인사. 저장된 기억과 지금 기분을 반영해 지어낸다. */
+export async function* greet(): AsyncGenerator<string> {
   pendingOccasion = "greet";
 
+  // 얼마 만에 다시 왔는지를 판정에 태워서 감정을 먼저 움직인다
+  const verdict = await judge("(사용자가 앱을 켰다)", "greet");
+  const applied = applyDelta(verdict.dAttach, verdict.dSulk);
+  logDebug(
+    "판정",
+    `감정 반영 · 애착 ${fmt(applied.appliedAttach)} → ${applied.emotions.attachment.toFixed(2)}` +
+      ` · 삐짐 ${fmt(applied.appliedSulk)} → ${applied.emotions.sulk.toFixed(2)}`,
+    `판정이 낸 값: 애착 ${fmt(verdict.dAttach)}, 삐짐 ${fmt(verdict.dSulk)}\n` +
+      `실제 반영된 값: 애착 ${fmt(applied.appliedAttach)}, 삐짐 ${fmt(applied.appliedSulk)}`,
+  );
+
+  const gap = timeSinceLastSeen();
+  touchLastSeen();
+
   const hasMemories = buildMemoryBlock().length > 0;
+  const e = loadEmotions();
+
+  // 삐진 상태에서 "반갑게 인사하고 뭘 제안해라"를 시키면
+  // 감정 블록이랑 정면으로 싸운다. 기분에 따라 지시 자체를 갈라준다.
+  // 인사 지시도 기분에 따라 갈린다. 감정 블록과 정면으로 싸우면 안 되기 때문.
+  const sulking = e.sulk >= 4;
+  // 삐졌거나, 아직 정이 안 붙었거나. 둘 다 살갑게 굴 이유가 없다.
+  const cold = e.attachment < 3 || (e.sulk >= 4 && e.attachment < 5);
+
+  const howTo = cold
+    ? `- 반가워하지 마라. 인사랍시고 살갑게 굴지 마라.\n` +
+      `- 한 줄. 짧게. 왔다는 걸 알아챘다는 정도면 충분하다.\n` +
+      `- 도울 일을 제안한다면 사무적으로. 들뜨지 마라.\n` +
+      `- 오랜만이든 방금이든 감흥 없다는 티를 내라.\n`
+    : sulking
+      ? `- 반가운 척하지 마라. 아직 안 풀렸다.\n` +
+        `- 한두 줄. 왔다는 건 알아챘고, 그게 마냥 반갑진 않다는 게 드러나게.\n` +
+        `- 뭘 해주겠다고 나서지 마라. 굳이 제안한다면 마지못해 던지는 투로.\n` +
+        `- 지난번에 걸린 게 있으면 그걸 물고 늘어져도 된다.\n`
+      : `- 인사 끝에 도울 일을 딱 하나만 콕 집어서 제안해라.\n` +
+        `  "뭐 도와줄까?" 같은 열린 질문은 실패다. 네가 알아서 하나를 정해서 들이밀어라.\n`;
+
+  const memoryLine = hasMemories
+    ? cold
+      ? `- 기록에 지난 일이 있지만 그건 그때 얘기다. 지금 마음은 거기 안 가 있다.\n` +
+        `  옛정을 꺼내며 반가워하지 마라. 아는 사이라는 사실만 있을 뿐이다.\n`
+      : `- 위 '이 사람과 지낸 기록'을 읽었다. 처음 보는 사이가 아니다.\n` +
+        `  지난번 일을 알고 있다는 게 인사에 자연스럽게 묻어나게 해라.\n` +
+        `  단, 기록을 요약해서 읊지는 마라. 한 조각만 슬쩍 건드리는 정도.\n`
+    : `- 기록이 없다. 오늘 처음 만나는 것처럼 굴어라.\n`;
 
   history.push({
     role: "user",
@@ -474,20 +632,19 @@ export function greet(): AsyncGenerator<string> {
       {
         text:
           `[SYSTEM — 사용자가 보낸 메시지가 아니다.]\n\n` +
-          `방금 컴퓨터가 켜졌고 너도 막 깨어났다. 사용자에게 첫마디를 건네라. 한두 문장.\n\n` +
+          `방금 컴퓨터가 켜졌고 너도 막 깨어났다. 사용자에게 첫마디를 건네라.\n\n` +
+          `마지막으로 만난 뒤: ${gap}\n\n` +
           `쓰는 법:\n` +
-          (hasMemories
-            ? `- 위 '이 사람과 지낸 기록'을 읽었다. 처음 보는 사이가 아니다.\n` +
-              `  지난번 일을 알고 있다는 게 인사에 자연스럽게 묻어나게 해라.\n` +
-              `  단, 기록을 요약해서 읊지는 마라. 한 조각만 슬쩍 건드리는 정도.\n` +
-              `  마지막으로 만난 게 오래됐으면 오래된 대로, 방금이면 방금인 대로.\n`
-            : `- 기록이 없다. 오늘 처음 만나는 것처럼 굴어라.\n`) +
+          memoryLine +
+          howTo +
+          `- 얼마 만에 왔는지는 태도에만 반영해라. 시간을 그대로 읊지는 마라.\n` +
           `- 아직 화면에서 본 건 없다. 지금 뭘 하고 있는지는 모른다.\n` +
           `- 없는 사실이나 숫자는 지어내지 마라.\n` +
-          `- 매번 똑같은 인사를 하지 마라.`,
+          `- 매번 똑같은 인사를 하지 마라.\n` +
+          `- 위 '## Right now' 가 지금 네 기분이다. 이 지시와 부딪히면 그쪽이 우선이다.`,
       },
     ],
   });
 
-  return callGemini();
+  yield* callGemini();
 }

@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 
 import { clippyApi } from "../clippyApi";
 import {
+  loadEmotions,
+  resetEmotions,
+  setEmotions,
+  summarizeEmotions,
+} from "../emotions";
+import {
   DebugEntry,
   clearDebug,
   getDebugEntries,
@@ -196,6 +202,85 @@ function LivePanel() {
   );
 }
 
+function EmotionPanel() {
+  const [, bump] = useState(0);
+  const e = loadEmotions();
+
+  // 값이 시간에 따라 감쇠하므로 주기적으로 다시 그린다
+  useEffect(() => {
+    const t = setInterval(() => bump((n) => n + 1), 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const nudge = (dA: number, dS: number) => {
+    setEmotions(e.attachment + dA, e.sulk + dS);
+    bump((n) => n + 1);
+  };
+
+  const row = (
+    label: string,
+    value: number,
+    onDown: () => void,
+    onUp: () => void,
+  ) => (
+    <tr>
+      <td style={{ paddingRight: 8, whiteSpace: "nowrap" }}>{label}</td>
+      <td style={{ paddingRight: 8, whiteSpace: "nowrap" }}>
+        {value.toFixed(1)} / 10
+      </td>
+      <td>
+        <Bar value={value} max={10} />
+      </td>
+      <td style={{ paddingLeft: 6, whiteSpace: "nowrap" }}>
+        <button style={{ minWidth: 22 }} onClick={onDown}>
+          −
+        </button>{" "}
+        <button style={{ minWidth: 22 }} onClick={onUp}>
+          +
+        </button>
+      </td>
+    </tr>
+  );
+
+  const d = e.lastDelta;
+  const fresh = Date.now() - d.at < 15 * 60 * 1000;
+
+  return (
+    <fieldset>
+      <legend>감정</legend>
+      <table style={{ borderCollapse: "collapse", fontSize: "0.9em" }}>
+        <tbody>
+          {row("애착", e.attachment, () => nudge(-1, 0), () => nudge(1, 0))}
+          {row("삐짐", e.sulk, () => nudge(0, -1), () => nudge(0, 1))}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 4, fontSize: "0.9em", color: "#444" }}>
+        {summarizeEmotions(e)}
+      </div>
+
+      {fresh && (d.attachment !== 0 || d.sulk !== 0) && (
+        <div style={{ fontSize: "0.9em", color: "#000080" }}>
+          방금 변화: 애착 {d.attachment >= 0 ? "+" : ""}
+          {d.attachment} · 삐짐 {d.sulk >= 0 ? "+" : ""}
+          {d.sulk}
+        </div>
+      )}
+
+      <div className="field-row" style={{ marginTop: 6 }}>
+        <button
+          onClick={() => {
+            resetEmotions();
+            bump((n) => n + 1);
+          }}
+        >
+          초기화
+        </button>
+      </div>
+    </fieldset>
+  );
+}
+
 export function SettingsDebug() {
   const [, force] = useState(0);
   const [openId, setOpenId] = useState<number | null>(null);
@@ -214,6 +299,7 @@ export function SettingsDebug() {
   return (
     <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
       <LivePanel />
+      <EmotionPanel />
 
       <div className="field-row" style={{ gap: 6 }}>
         <button onClick={() => clearDebug()}>비우기</button>

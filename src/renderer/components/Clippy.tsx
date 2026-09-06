@@ -8,6 +8,7 @@ import {
 import { useChat } from "../contexts/ChatContext";
 import { log } from "../logging";
 import { useDebugState } from "../contexts/DebugContext";
+import { playAnimationSounds } from "../soundPlayer";
 
 const WAIT_TIME = 6000;
 const CLICK_SLOP = 4; // 이만큼 안 움직였으면 드래그가 아니라 클릭
@@ -37,6 +38,7 @@ export function Clippy() {
   const playAnimation = useCallback((key: string) => {
     if (ANIMATIONS[key]) {
       log(`Playing animation`, { key });
+      playAnimationSounds(key);
 
       if (animationTimeoutId) {
         window.clearTimeout(animationTimeoutId);
@@ -100,6 +102,10 @@ export function Clippy() {
 
       const randomIdleAnimation = getRandomIdleAnimation(animation);
       setAnimation(randomIdleAnimation);
+      const idleName = Object.keys(ANIMATIONS).find(
+        (k) => ANIMATIONS[k] === randomIdleAnimation,
+      );
+      if (idleName) playAnimationSounds(idleName);
 
       setAnimationTimeoutId(
         window.setTimeout(() => {
