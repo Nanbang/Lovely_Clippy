@@ -1,32 +1,179 @@
-# Clippy
+# Lovely Clippy
 
-[Clippy](https://felixrieseberg.github.io/clippy/) let's you run a variety of large language models (LLMs) locally on your computer while sticking with a user interface of the 1990s. Through Llama.cpp, it supports models in the popular GGUF format, which is to say most publicly available models. It comes with one-click installation support for Google's Gemma3, Meta's Llama 3.2, Microsoft's Phi-4, and Qwen's Qwen3.
+화면을 지켜보다가 제멋대로 튀어나와 참견하는 클리피.
 
-It's a love letter and homage to the late, great Clippy, the assistant from Microsoft Office 1997. The character was designed by illustrator Kevan Atteberry, who created more than 15 potential characters for Microsoft's Office Assistants. This app is not affiliated, approved, or supported by Microsoft. Consider it software art. If you don't like it, consider it software satire.
+[felixrieseberg/clippy](https://github.com/felixrieseberg/clippy) 를 개조했다.
+원본은 로컬 LLM 을 돌리는 채팅 앱이었고, 이 포크는 그 부분을 걷어내고
+화면 감시, 자발적 발화, 감정, 장기 기억을 붙였다.
 
-It is also meant to be a reference implementation of [@electron/llm](https://github.com/electron/llm), hoping to help other developers of Electron apps make use of local language models.
+만든 사람: dokki
 
-## Features
+---
 
-- Simple, familiar, and classic chat interface. Send messages to your models, get a response.
-- Batteries included: No complicated setup. Just open the app and chat away. Thanks to llama.cpp and `node-llama-cpp`, the app will automatically discover the most efficient way to run your models (Metal, CUDA, Vulkan, etc).
-- Custom models, prompts, and parameters: Load your own downloaded models and play with the settings.
-- Offline, local, free: Everything runs on your computers. The only network request Clippy makes is to check for updates (which you can disable).
+## 원본과 뭐가 다른가
 
-## Non-Features
+**말을 걸지 않아도 먼저 나온다.** 활성 창의 제목과 프로그램 이름을 3초마다 읽고,
+얼마나 오래 봤는지 몇 번째 왔는지를 센다. 조건이 무르익으면 알아서 튀어나온다.
 
-Countless little chat apps for local LLMs exist out there. Many of them are likely better - and that's okay. This project isn't trying to be your best chat bot. I'd like you to enjoy a weird mix of nostalgia for 1990s technology paired with one the most magical technologies we can run on our computers in 2025.
+**대화가 이어진다.** 트리거로 튀어나온 말과 사용자가 건 말이 같은 대화에 섞인다.
+컴퓨터를 켜놓은 동안은 앞뒤가 이어지고, 끌 때 요약해서 저장하면 다음에도 기억한다.
 
-## Downloading More Models
+**감정이 있다.** 애착과 삐짐 두 축. 코드가 값을 들고, 판정 모델이 맥락을 보고 움직인다.
+수치는 모델에게 넘기지 않는다. 조각을 조립한 서술 문장으로만 준다.
 
-Clippy supports (thanks to Llama.cpp) most GGUF models. You can find GGUF models in plenty of online sources - I tend to go with models quantized by [TheBloke](https://huggingface.co/thebloke) or [Unsloth](https://huggingface.co/unsloth).
+**성격을 앱 안에서 고친다.** 카드 4종(한국어 반말/존댓말, 영어 casual/formal)을
+설정 창에서 바로 편집한다. 감정 문구도 마찬가지.
 
-## Acknowledgements
+**거짓말을 감시한다.** 대사에 나온 숫자가 실제로 보낸 내용에 없으면 디버그에 경고가 뜬다.
+모르는 건 모른다고 말하게 프롬프트에 박아뒀다.
 
-Thanks to:
+**원본 효과음.** clippyjs 에서 가져온 MP3 15개를, 원본 프레임 타이밍 그대로 재생한다.
 
-- I am so grateful to Microsoft - not only for everything they've done for Electron, but also for giving us one of the most iconic characters and designs of computing history.
-- [Kevan Atteberry](https://www.kevanatteberry.com/) for Clippy
-- [Jordan Scales (@jdan)](https://github.com/jdan) for the Windows 98 design
-- [Pooya Parsa (@pi0)](https://github.com/pi0) for being the (as far as I know) person to extract the length of each frame from the Clippy spritesheet.
-- [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) for squeezing llama.cpp into Node.js
+---
+
+## 처음 세팅
+
+### 1. 의존성
+
+```bash
+npm install
+npm install get-windows
+```
+
+### 2. API 키
+
+Google AI Studio 에서 Gemini API 키를 발급받는다.
+프로젝트 루트에 `.env` 파일을 만들고 한 줄 넣는다.
+
+```
+VITE_GEMINI_API_KEY=발급받은키
+```
+
+이건 최초 실행 때 한 번만 읽힌다. 그 뒤로는 앱의
+`설정 > Model` 에 저장된 값을 쓴다. 거기서 연결을 여러 개 만들어
+모델과 키를 갈아끼울 수 있다.
+
+### 3. 실행
+
+```bash
+npm start
+```
+
+---
+
+## 설정 창
+
+| 탭 | 내용 |
+|---|---|
+| **Persona** | 성격 카드 편집 / 감정 조각 편집·슬라이더·실시간 미리보기 |
+| **Appearance** | 창 옵션, 폰트, 효과음 켜기·음량 |
+| **Model** | API 연결 관리. 키·모델을 여러 개 두고 전환 |
+| **Parameters** | temperature, thinking level, 최대 토큰, 대화 기억 턴 수, 화면 인지 모드 |
+| **Advanced** | 비어 있음. 앞으로 붙일 것들 목록만 |
+| **Debug** | watcher 실시간 상태, 감정 수치 조정, 모델에 실제로 보낸 프롬프트 전문 |
+| **Save** | 세션 요약 생성·저장·합치기 |
+
+---
+
+## 트리거 조절
+
+발화 빈도와 조건은 루트의 `config.json` 에서 고친다.
+
+```jsonc
+{
+  "발화": {
+    "테스트모드": true,        // true 면 20초마다. 실사용은 false
+    "평균간격초_실사용": 720
+  },
+  "임계값_분": {
+    "화면_고정": 10,           // 같은 화면을 이만큼 보면 반응
+    "사이트_체류": 8
+  },
+  "sites": [ /* 사이트 등록. 여기 없어도 굴러간다 */ ]
+}
+```
+
+`sites` 에 줄을 추가하면 그 사이트에서 무엇을 셀지 구체적으로 지정할 수 있다.
+등록하지 않아도 체류 시간과 페이지 수는 센다.
+
+**임계값을 바꿨는데 왜 안 나오는지 모르겠으면** `설정 > Debug` 를 열어라.
+어느 조건이 몇 퍼센트 찼는지, 압력이 얼마나 쌓였는지 실시간으로 보인다.
+
+---
+
+## 밖으로 나가는 정보
+
+솔직하게 적어둔다.
+
+**나가는 것.** 발화할 때, 활성 창의 제목과 프로그램 이름, 체류 시간, 횟수 요약이
+Google Gemini API 로 전송된다. 대화 내용과 저장된 기억도 같이 간다.
+
+**나가지 않는 것.** 화면 캡처는 하지 않는다. 창 안의 내용, 입력한 글자,
+커서 위치는 애초에 읽지 않는다. 창 제목이 전부다.
+
+**로컬에만 있는 것.** 3초마다 도는 화면 감시, 체류 시간과 횟수 계산,
+트리거 판정, 감정 수치. 전부 이 컴퓨터에서만 돈다.
+
+**주의.** 창 제목에는 생각보다 많은 게 들어 있다. 보고 있는 문서 이름,
+유튜브 영상 제목, 브라우저 탭 제목. 그게 API 로 나간다는 뜻이다.
+민감한 창은 `config.json` 의 `ignoreTitles` 에 넣어라.
+
+---
+
+## 구조
+
+```
+watcher-child.mjs        별도 Node 프로세스. 창을 읽고 트리거를 판정한다
+config.json              트리거 조건, 사이트 등록, 발화 빈도
+
+src/main/
+  watcher-host.ts        watcher 를 자식으로 띄우고 신호를 화면으로 넘긴다
+  clippy-extras.ts       창 이동, 강제 소환 단축키(Ctrl+Alt+Q), 종료
+
+src/renderer/
+  gemini.ts              모델 호출, 대화 기록, 상황판, 판정
+  emotions.ts            애착·삐짐 수치와 서술 조각
+  cards.ts               성격 카드 4종
+  memories.ts            세션 요약 저장
+  summarize.ts           요약 생성
+  soundPlayer.ts         프레임 타이밍에 맞춘 효과음
+  clippy-sounds.ts       원본 MP3 15개와 큐 표
+  streamRunner.ts        스트리밍. 화면 컴포넌트 밖에서 돈다
+  debugLog.ts            디버그 기록
+  components/
+    WatcherBridge.tsx    항상 살아서 watcher 신호를 받는다
+```
+
+**왜 watcher 가 별도 프로세스인가.** `get-windows` 가 ESM 전용 네이티브 모듈이라
+Electron 메인에 직접 번들하면 깨진다. 자식 프로세스로 분리하면 그 문제가 사라지고,
+단독으로 `node watcher-child.mjs` 실행해서 시험해볼 수도 있다.
+
+**왜 스트리밍이 컴포넌트 밖에 있는가.** 설정 탭을 보고 있으면 채팅 컴포넌트가
+화면에서 내려간다. 그 안에서 스트리밍을 돌리면 대화가 통째로 끊긴다.
+
+---
+
+## 알려진 문제
+
+- 트리거가 터지는 순간 창을 바꾸면 새 창 기준으로 대사가 나온다
+- 앱을 켜자마자 강제 소환하면 화면 정보가 "바탕화면" 으로 나간다
+- `1997` 같은 숫자에서 `97` 을 지어낸 값으로 잘못 잡는 오탐이 있다
+- 안티치트 게임 감지는 계산만 하고 아직 아무것도 하지 않는다
+- API 키가 렌더러에 있다. 메인 프로세스로 옮기는 게 맞다
+- `persona.ts` 는 `cards.ts` 로 대체된 죽은 파일이다
+
+---
+
+## 크레딧
+
+- **[felixrieseberg/clippy](https://github.com/felixrieseberg/clippy)** — 이 프로젝트의 바탕.
+  Electron 셸, 캐릭터 렌더링, 애니메이션 재생기, 98년도 UI, 말풍선 창이 여기서 왔다.
+- **[Kevan Atteberry](https://www.kevanatteberry.com/)** — 클리피를 디자인한 일러스트레이터.
+  마이크로소프트 오피스 어시스턴트 후보로 15종이 넘는 캐릭터를 만들었다.
+- **[Jordan Scales (@jdan)](https://github.com/jdan)** — 98.css
+- **[Pooya Parsa (@pi0)](https://github.com/pi0)** — 스프라이트 프레임 길이 추출, clippyjs.
+  효과음과 프레임별 사운드 큐를 여기서 가져왔다.
+
+클리피와 관련된 모든 시각·음성 자산은 마이크로소프트의 소유다.
+이 프로젝트는 마이크로소프트와 아무 관련이 없고 승인받지도 않았다.
+개인적으로 쓰려고 만든 물건이다.

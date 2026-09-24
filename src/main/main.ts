@@ -19,7 +19,10 @@ async function onReady() {
   console.info(`Welcome to Clippy v${app.getVersion()}`);
 
   await setupAutoUpdater();
-  await loadLlm();
+  // 로컬 LLM 은 쓰지 않는다. 제미나이를 직접 부른다.
+  // 모델 파일이 없는 컴퓨터에서는 여기서 오래 멈추고,
+  // 있어도 메모리와 시작 시간만 잡아먹는다.
+  // await loadLlm();
   setupAppMenu();
   setupIpcListeners();
   setupWindowListener();
@@ -27,6 +30,8 @@ async function onReady() {
   startWatcher();
 }
 
+// 안 쓰지만 나중에 되돌릴 수 있게 남겨둔다.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function loadLlm() {
   await loadElectronLlm({
     getModelPath: (modelAlias: string) => {

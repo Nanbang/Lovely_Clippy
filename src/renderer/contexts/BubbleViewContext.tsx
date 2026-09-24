@@ -12,7 +12,8 @@ export type BubbleView =
   | "settings-advanced"
   | "settings-about"
   | "settings-debug"
-  | "save";
+  | "save"
+  | "plan";
 
 type BubbleViewContextType = {
   currentView: BubbleView;

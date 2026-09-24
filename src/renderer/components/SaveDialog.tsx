@@ -11,6 +11,15 @@ import {
   updateMemory,
 } from "../memories";
 import { summarizeMerge, summarizeSession } from "../summarize";
+import { MAX_PROMPT_CHARS, memoryUsage } from "../memories";
+import {
+  Note,
+  activeNotes,
+  completeNote,
+  deleteNote,
+  notesCharCount,
+  updateNote,
+} from "../notes";
 import { resetHistory } from "../gemini";
 import { BubbleWindowBottomBar } from "./BubbleWindowBottomBar";
 
@@ -26,6 +35,158 @@ export type SaveDialogProps = {
   onClose: () => void;
   sessionStartedAt: number;
 };
+
+function UsageBar() {
+  const mem = memoryUsage();
+  const notes = notesCharCount();
+  const total = mem.used + notes;
+  const max = MAX_PROMPT_CHARS;
+
+  const pct = (n: number) => Math.min(100, (n / max) * 100);
+  const over = total > max;
+
+  const seg = (w: number, color: string, title: string) => (
+    <span
+      title={title}
+      style={{
+        display: "inline-block",
+        width: `${w}%`,
+        height: "100%",
+        background: color,
+      }}
+    />
+  );
+
+  return (
+    <fieldset>
+      <legend>
+        컨텍스트 사용량 {total.toLocaleString()} / {max.toLocaleString()}자
+        {over && " ⚠ 초과"}
+      </legend>
+
+      <div
+        style={{
+          height: 16,
+          border: "1px inset #888",
+          background: "#fff",
+          display: "flex",
+          overflow: "hidden",
+        }}
+      >
+        {seg(pct(mem.used), "#000080", `기억 ${mem.used}자`)}
+        {seg(pct(notes), "#008080", `메모 ${notes}자`)}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          marginTop: 4,
+          fontSize: "0.85em",
+          flexWrap: "wrap",
+        }}
+      >
+        <span>
+          <span style={{ display: "inline-block", width: 9, height: 9, background: "#000080" }} />{" "}
+          기억 {mem.used.toLocaleString()}자
+        </span>
+        <span>
+          <span style={{ display: "inline-block", width: 9, height: 9, background: "#008080" }} />{" "}
+          메모 {notes.toLocaleString()}자
+        </span>
+        <span style={{ color: "#555" }}>
+          남음 {Math.max(0, max - total).toLocaleString()}자
+        </span>
+      </div>
+
+      {over && (
+        <div style={{ marginTop: 4, color: "#a00000", fontSize: "0.85em" }}>
+          한도를 넘어서 오래된 기억부터 프롬프트에서 빠집니다. 합치기로 줄이세요.
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
+function NotesPanel() {
+  const [, bump] = useState(0);
+  const list = activeNotes();
+
+  const when = (t: number) =>
+    new Date(t).toLocaleString("ko-KR", {
+      month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+
+  return (
+    <fieldset>
+      <legend>적어둔 것 {list.length}</legend>
+
+      <div
+        style={{
+          border: "1px inset #888",
+          background: "#fff",
+          maxHeight: 140,
+          overflowY: "auto",
+          fontSize: "0.9em",
+        }}
+      >
+        {list.length === 0 && (
+          <div style={{ padding: 6, color: "#666" }}>
+            없음. 클리피에게 "이거 적어둬" 라고 말하면 저장됩니다.
+          </div>
+        )}
+
+        {list.map((n: Note) => (
+          <div
+            key={n.id}
+            style={{
+              display: "flex",
+              gap: 4,
+              alignItems: "center",
+              padding: "3px 4px",
+              borderBottom: "1px solid #ddd",
+            }}
+          >
+            <input
+              type="text"
+              value={n.text}
+              style={{ flex: 1, fontSize: "inherit" }}
+              onChange={(e) => {
+                updateNote(n.id, { text: e.target.value });
+                bump((x) => x + 1);
+              }}
+            />
+            {n.remindAt && (
+              <span style={{ color: "#008080", whiteSpace: "nowrap" }}>
+                {when(n.remindAt)}
+              </span>
+            )}
+            <button
+              style={{ minWidth: 24 }}
+              title="완료"
+              onClick={() => {
+                completeNote(n.id);
+                bump((x) => x + 1);
+              }}
+            >
+              ✓
+            </button>
+            <button
+              style={{ minWidth: 24 }}
+              title="삭제"
+              onClick={() => {
+                deleteNote(n.id);
+                bump((x) => x + 1);
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
 
 export function SaveDialog({ onClose, sessionStartedAt }: SaveDialogProps) {
   const [list, setList] = useState<Memory[]>([]);
@@ -117,6 +278,9 @@ export function SaveDialog({ onClose, sessionStartedAt }: SaveDialogProps) {
           overflowY: "auto",
         }}
       >
+        <UsageBar />
+        <NotesPanel />
+
         {/* 위: 요약 만들기 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <fieldset style={{ display: "flex", flexDirection: "column" }}>

@@ -4,6 +4,8 @@ import { Message } from "./Message";
 import { ChatInput } from "./ChatInput";
 import { useChat } from "../contexts/ChatContext";
 import { sendMessage } from "../gemini";
+import { stopAlarm } from "../alarm";
+import { noteUserSpoke } from "../sleep";
 import {
   runStream,
   subscribeStream,
@@ -34,6 +36,10 @@ export function Chat({ style }: ChatProps) {
 
   const handleSendMessage = async (message: string) => {
     if (status !== "idle" || isBusy()) return;
+
+    // 아무 말이나 하면 알람이 꺼지고 슬립도 풀린다.
+    stopAlarm();
+    noteUserSpoke();
 
     await addMessage({
       id: crypto.randomUUID(),

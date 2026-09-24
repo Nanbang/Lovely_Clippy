@@ -1,4 +1,10 @@
-import { ipcMain, BrowserWindow, globalShortcut, app } from "electron";
+import {
+  ipcMain,
+  BrowserWindow,
+  globalShortcut,
+  app,
+  powerMonitor,
+} from "electron";
 import { forceObservation } from "./watcher-host";
 
 // 클리피 창을 마우스로 끌어 옮기기.
@@ -15,6 +21,16 @@ ipcMain.on("clippy-move-by", (event, delta: { dx: number; dy: number }) => {
 ipcMain.on("clippy-quit", () => {
   console.info("[종료] 사용자가 저장 창에서 종료를 눌렀습니다.");
   app.quit();
+});
+
+// 마지막 입력 이후 흐른 시간(초).
+// 자리를 비운 것과 한 화면에 집중하는 것을 구분하는 데 쓴다.
+ipcMain.handle("clippy-idle-seconds", () => {
+  try {
+    return powerMonitor.getSystemIdleTime();
+  } catch {
+    return 0;
+  }
 });
 
 // 강제 소환 단축키.

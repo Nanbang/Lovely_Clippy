@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useChat } from "../contexts/ChatContext";
+import { checkConnection } from "../connections";
+import { checkActiveCard } from "../cards";
 export type ChatInputProps = {
   onSend: (message: string) => void;
   onAbort: () => void;
@@ -8,8 +10,13 @@ export type ChatInputProps = {
 export function ChatInput({ onSend, onAbort }: ChatInputProps) {
   const { status } = useChat();
   const [message, setMessage] = useState("");
-  const { isModelLoaded } = useChat();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 원본 앱은 로컬 모델이 로딩돼야 입력창을 열어줬다.
+  // 우리는 그 모델을 안 쓰므로 그 값은 영원히 false 다.
+  // 대신 우리 쪽 준비 상태(연결 + 성격 카드)를 본다.
+  const problem = checkConnection() || checkActiveCard();
+  const ready = !problem;
 
   const handleSend = useCallback(() => {
     const trimmedMessage = message.trim();
@@ -39,10 +46,10 @@ export function ChatInput({ onSend, onAbort }: ChatInputProps) {
   };
 
   useEffect(() => {
-    if (isModelLoaded && textareaRef.current) {
+    if (ready && textareaRef.current) {
       textareaRef.current.focus();
     }
-  }, [isModelLoaded]);
+  }, [ready]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -58,9 +65,9 @@ export function ChatInput({ onSend, onAbort }: ChatInputProps) {
     }
   };
 
-  const placeholder = isModelLoaded
-    ? "Type a message, press Enter to send..."
-    : "This is your chat input, we're just waiting for a model to load...";
+  const placeholder = ready
+    ? "메시지를 입력하고 Enter"
+    : problem || "준비 중...";
 
   return (
     <div style={{ display: "flex", alignItems: "flex-end" }}>
@@ -69,7 +76,7 @@ export function ChatInput({ onSend, onAbort }: ChatInputProps) {
         ref={textareaRef}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        disabled={!isModelLoaded}
+        disabled={!ready}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         style={{
@@ -81,7 +88,7 @@ export function ChatInput({ onSend, onAbort }: ChatInputProps) {
         }}
       />
       <button
-        disabled={!isModelLoaded}
+        disabled={!ready}
         style={buttonStyle}
         onClick={handleSendOrAbort}
       >

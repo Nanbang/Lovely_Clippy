@@ -136,32 +136,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [currentChatRecord, messages]);
 
   const loadModel = useCallback(
-    async (initialPrompts: LanguageModelPrompt[] = []) => {
-      setIsModelLoaded(false);
-
-      const options: LanguageModelCreateOptions = {
-        modelAlias: settings.selectedModel,
-        systemPrompt: getSystemPrompt(),
-        topK: settings.topK,
-        temperature: settings.temperature,
-        initialPrompts,
-      };
-
-      console.log("Loading model with options:", options);
-
-      try {
-        await electronAi.create(options);
-        setIsModelLoaded(true);
-      } catch (error) {
-        console.error(error);
-
-        addMessage({
-          id: crypto.randomUUID(),
-          children: <ErrorLoadModelMessageContent error={error} />,
-          sender: "clippy",
-          createdAt: Date.now(),
-        });
-      }
+    async (_initialPrompts: LanguageModelPrompt[] = []) => {
+      // 로컬 모델은 쓰지 않는다. 제미나이를 직접 부른다.
+      //
+      // 원본은 여기서 모델을 올리고, 실패하면 채팅창에
+      // "Clippy failed to load the model" 안내를 띄웠다.
+      // 우리는 모델 자체가 없으므로 그 안내가 늘 뜬다. 통째로 끈다.
+      //
+      // isModelLoaded 는 입력창 잠금에만 쓰였는데, 그쪽도
+      // 우리 준비 상태(연결 + 카드)를 보도록 바꿔서 이제 아무도 안 읽는다.
+      setIsModelLoaded(true);
     },
     [
       settings.selectedModel,
@@ -217,32 +201,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     });
   }, [messages]);
 
-  // Load the model when the selected model changes
-  // or when the system prompt, topK, or temperature change
+  // 원본은 여기서 로컬 모델을 올리고 내렸다.
+  // 우리는 제미나이를 직접 부르므로 할 일이 없다.
   useEffect(() => {
-    if (debug?.simulateDownload) {
-      setIsModelLoaded(true);
-      return;
-    }
-
-    if (settings.selectedModel) {
-      loadModel();
-    } else if (!settings.selectedModel && isModelLoaded) {
-      electronAi
-        .destroy()
-        .then(() => {
-          setIsModelLoaded(false);
-        })
-        .catch((error) => {
-          console.error(error);
-        });
-    }
-  }, [
-    settings.selectedModel,
-    settings.systemPrompt,
-    settings.topK,
-    settings.temperature,
-  ]);
+    setIsModelLoaded(true);
+  }, []);
 
   // If selectedModel is undefined or not available, set it to the first downloaded model
   useEffect(() => {
@@ -285,23 +248,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     setHasPerformedStartupCheck(true);
 
-    addMessage({
-      id: crypto.randomUUID(),
-      children: <WelcomeMessageContent />,
-      content: "Welcome to Clippy!",
-      sender: "clippy",
-      createdAt: Date.now(),
-    });
+    // 원본의 "Welcome to Clippy!" 안내는 띄우지 않는다.
+    // WatcherBridge 가 기억과 감정을 읽고 직접 첫인사를 만든다.
 
-    const downloadModelIfNoneReady = async () => {
-      await clippyApi.downloadModelByName("Gemma 3 (1B)");
-
-      setTimeout(async () => {
-        await clippyApi.updateModelState();
-      }, 500);
-    };
-
-    void downloadModelIfNoneReady();
+    // 원본은 여기서 Gemma 3 (1B) 를 자동으로 받았다.
+    // 우리는 로컬 모델을 쓰지 않으므로 받지 않는다.
   }, [models]);
 
   // Subscribe to the main process's newChat event

@@ -6,6 +6,7 @@ import { Settings } from "./Settings";
 import { useBubbleView } from "../contexts/BubbleViewContext";
 import { Chats } from "./Chats";
 import { SaveDialog } from "./SaveDialog";
+import { PlanWindow } from "./PlanWindow";
 
 export function Bubble() {
   const { currentView, setCurrentView } = useBubbleView();
@@ -42,6 +43,8 @@ export function Bubble() {
     content = <Settings onClose={() => setCurrentView("chat")} />;
   } else if (currentView === "chats") {
     content = <Chats onClose={() => setCurrentView("chat")} />;
+  } else if (currentView === "plan") {
+    content = <PlanWindow onClose={() => setCurrentView("chat")} />;
   } else if (currentView === "save") {
     content = (
       <SaveDialog
@@ -103,6 +106,18 @@ export function Bubble() {
             }
           >
             Save
+          </button>
+          <button
+            style={{
+              marginRight: "8px",
+              paddingLeft: "8px",
+              paddingRight: "8px",
+            }}
+            onClick={() =>
+              setCurrentView(currentView === "plan" ? "chat" : "plan")
+            }
+          >
+            Plan
           </button>
           <button
             aria-label="Minimize"

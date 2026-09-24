@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld("clippyWatcher", {
   offLive: () => {
     ipcRenderer.removeAllListeners("clippy-live");
   },
+  getIdleSeconds: (): Promise<number> =>
+    ipcRenderer.invoke("clippy-idle-seconds"),
   quit: () => {
     ipcRenderer.send("clippy-quit");
   },

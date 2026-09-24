@@ -8,6 +8,15 @@ import { loadParams } from "./params";
 import { logDebug } from "./debugLog";
 import { buildMemoryBlock } from "./memories";
 import {
+  activeNotes,
+  addNote,
+  buildNotesBlock,
+  buildNotesCount,
+  checkSecret,
+  completeNote,
+  deleteNote,
+} from "./notes";
+import {
   applyDelta,
   buildEmotionBlock,
   loadEmotions,
@@ -36,10 +45,61 @@ const OCCASION_KO: Record<Occasion, string> = {
 };
 
 let lastOccasion: Occasion | null = null;
-let lastInner = "";   // 직전 발화의 속마음. 판정에만 쓰고 대사 프롬프트엔 안 넣는다.
+let lastInner = "";   // 직전 발화의 속마음. 판정 + 다음 턴 프롬프트에 한 번만 들어간다.
+let seriousMode = false;  // 이번 턴에 제대로 답해야 하는지
+let searchMode = false;   // 이번 턴에 웹 검색 도구를 붙일지
+let notesMode = false;    // 이번 턴에 메모 전체를 보여줄지
+let reminderDue: string | null = null; // 지금 알려야 할 리마인더
 
 export function getLastInner() {
   return lastInner;
+}
+
+/** 응답에 섞인 메모 태그를 실제 저장에 반영한다. */
+function applyNoteTags(text: string) {
+  // <memo remind="...">내용</memo>
+  const memoRe = /<memo(?:\s+remind="([^"]*)")?>([\s\S]*?)<\/memo>/g;
+  let m: RegExpExecArray | null;
+  while ((m = memoRe.exec(text))) {
+    const body = m[2].trim();
+    if (!body) continue;
+
+    let remindAt: number | undefined;
+    if (m[1]) {
+      const t = Date.parse(m[1].replace(" ", "T"));
+      if (!Number.isNaN(t)) remindAt = t;
+    }
+
+    const result = addNote(body, remindAt);
+    if (typeof result === "string") {
+      logDebug("오류", `메모 거부: ${result}`, body);
+    } else {
+      logDebug(
+        "관찰",
+        `메모 저장${remindAt ? " (알림 있음)" : ""}`,
+        `${body}${remindAt ? `\n알림: ${new Date(remindAt).toLocaleString("ko-KR")}` : ""}`,
+      );
+    }
+  }
+
+  // <done>번호</done> / <undo>번호</undo>
+  const list = activeNotes();
+  const pick = (n: string) => list[Number(n) - 1];
+
+  for (const mm of text.matchAll(/<done>(\d+)<\/done>/g)) {
+    const note = pick(mm[1]);
+    if (note) {
+      completeNote(note.id);
+      logDebug("관찰", "메모 완료 처리", note.text);
+    }
+  }
+  for (const mm of text.matchAll(/<undo>(\d+)<\/undo>/g)) {
+    const note = pick(mm[1]);
+    if (note) {
+      deleteNote(note.id);
+      logDebug("관찰", "메모 삭제", note.text);
+    }
+  }
 }
 
 function extractInner(text: string): string {
@@ -117,11 +177,41 @@ export function getHistory() {
 
 export function resetHistory() {
   history.length = 0;
+  lastInner = "";
+  seriousMode = false;
+  searchMode = false;
+  notesMode = false;
   lastOccasion = null;
   lastSpokeAt = 0;
   lastUserAt = 0;
   pendingOccasion = null;
 }
+
+const NOTE_BLOCK = `
+
+## Writing things down
+The user can ask you to note something. Only then. Never on your own initiative.
+
+When they do, put it at the very end of your reply:
+<memo>the note, one short line</memo>
+<memo remind="2026-09-10 18:00">a note with a time on it</memo>
+
+How to write it:
+- One short line. They should understand it later from this line alone.
+- Keep their proper nouns, names, numbers and links exactly as they wrote them.
+- Do not invent detail. Add at most a word of context if it would be unclear.
+- No jokes, no commentary in the note itself. Save that for your actual line.
+- If they gave a time ("tomorrow evening", "friday 6pm"), work out the real
+  date and time from the clock above and put it in remind="YYYY-MM-DD HH:MM".
+  No time mentioned means no remind attribute.
+- Say out loud what you wrote down, so they can correct you.
+
+Refuse outright: passwords, API keys, tokens, card numbers, ID numbers.
+Anything secret goes out to a server every single turn once it is noted.
+Turn them down and tell them why, in your own voice.
+
+To cross one off when they say it is done: <done>2</done> — the number from the list.
+To remove one: <undo>2</undo>`;
 
 const INNER_BLOCK = `
 
@@ -148,7 +238,7 @@ function systemPrompt(): string | null {
   // ── 고정 블록 ──────────────────────────────
   // 여기까지는 세션 내내 안 변한다. 프롬프트 캐싱이 걸리는 구간이므로
   // 매번 바뀌는 것(시각, 기억, 상태)을 절대 이 위로 올리지 말 것.
-  let s = card.text + ANIMATION_BLOCK + INNER_BLOCK;
+  let s = card.text + ANIMATION_BLOCK + INNER_BLOCK + NOTE_BLOCK;
 
   // ── 변하는 블록 ────────────────────────────
   s += buildMemoryBlock();
@@ -163,7 +253,40 @@ function systemPrompt(): string | null {
     s += `\n\n(Screen right now: ${currentScreen})`;
   }
 
+  // 메모는 평소엔 개수만. 물어봤을 때만 전체.
+  // 전부 넣어두면 잡담에도 할 일을 들먹인다.
+  s += notesMode ? buildNotesBlock() : buildNotesCount();
+
   s += buildEmotionBlock();
+
+  // 직전 턴의 속마음. 하나만 들어가고, 그전 것은 남지 않는다.
+  if (lastInner) {
+    s += `\n\n## What was in your head a moment ago\n${lastInner}\n\n` +
+      `This is what you were actually thinking last turn, not what you said.\n` +
+      `Decide whether it still holds. It may have passed.\n` +
+      `Never say it out loud and never paraphrase it into a line.\n` +
+      `It shapes where this goes, nothing more.`;
+  }
+
+  if (searchMode) {
+    s += `\n\n## Look it up
+You have web search this turn. Use it before you answer — do not guess from memory.
+Say what you actually found. If the search turns up nothing useful, say that instead
+of filling the gap. Report it in your own voice; you are still you.`;
+  }
+
+  if (seriousMode) {
+    s += `\n\n## Answer this one properly
+They actually want to know. Keep who you are, change only how much you give them.
+
+- No length limit here. Take as much room as the answer needs.
+- Give them everything you know. Structure it, give examples, explain why.
+- Same voice as always. Same register, same nicknames, same rudeness.
+- Showing off or needling them is fine. The substance comes first.
+- If you do not know, say you do not know. Never invent facts. This one is absolute.
+- Keep jokes at the edges. Do not thread them through the explanation.
+- The character card's "one or two sentences" rule does not apply to this turn.`;
+  }
 
   // 시각은 매분 바뀌므로 반드시 맨 뒤
   const now = new Date();
@@ -218,6 +341,13 @@ async function* callGemini(): AsyncGenerator<string> {
   };
   if (thinkingSupported) {
     body.generationConfig.thinkingConfig = { thinkingLevel: params.thinkingLevel };
+  }
+
+  // 판정이 검색이 필요하다고 본 턴에만 도구를 붙인다.
+  // 안 붙이면 검색 자체가 불가능하므로 확실하게 통제된다.
+  // 주의: 검색 도구는 function_declarations 같은 비검색 도구와 같이 못 쓴다.
+  if (searchMode) {
+    body.tools = [{ google_search: {} }];
   }
 
   logDebug(
@@ -285,8 +415,13 @@ async function* callGemini(): AsyncGenerator<string> {
   }
 
   if (full) {
+    applyNoteTags(full);
     lastInner = extractInner(full);
-    const cleaned = full.replace(/<(past|now|want)>[\s\S]*?<\/\1>/g, "").trim();
+    const cleaned = full
+      .replace(/<(past|now|want)>[\s\S]*?<\/\1>/g, "")
+      .replace(/<memo(?:\s+remind="[^"]*")?>[\s\S]*?<\/memo>/g, "")
+      .replace(/<(done|undo)>\d+<\/\1>/g, "")
+      .trim();
     history.push({ role: "model", parts: [{ text: cleaned || full }] });
     lastSpokeAt = Date.now();
     if (pendingOccasion) {
@@ -344,9 +479,23 @@ function warnAboutNumbers(line: string, sent: Turn[]) {
   );
 }
 
-type Judgment = { needScreen: boolean; dAttach: number; dSulk: number };
+type Judgment = {
+  needScreen: boolean;
+  dAttach: number;
+  dSulk: number;
+  serious: boolean;
+  search: boolean;
+  notes: boolean;
+};
 
 const fmt = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2);
+
+/** "3.27 그대로" 또는 "3.19 → 3.27 (+0.08)" 처럼 읽히게 */
+function describeDelta(applied: number, now: number): string {
+  if (Math.abs(applied) < 0.005) return `${now.toFixed(2)} 그대로`;
+  const before = now - applied;
+  return `${before.toFixed(2)} → ${now.toFixed(2)} (${fmt(applied)})`;
+}
 
 /**
  * 판정 한 번으로 두 가지를 본다.
@@ -360,6 +509,9 @@ async function judge(message: string, occasion: "reply" | "greet" = "reply"): Pr
     needScreen: ASKS_ABOUT_SCREEN.test(message),
     dAttach: 0,
     dSulk: 0,
+    serious: false,
+    search: false,
+    notes: /메모|적어|기억해|할 일|todo|note/i.test(message),
   };
 
   const conn = getActiveConnection();
@@ -411,10 +563,31 @@ async function judge(message: string, occasion: "reply" | "greet" = "reply"): Pr
     `   +1 은 아주 드물다. 관계가 확 달라지는 순간에만.\n` +
     `   내리는 것도 마찬가지로 드물다. 진짜로 차갑게 굴거나 쫓아냈을 때만 -0.5.\n` +
     `   농담으로 티격태격하는 건 관계가 나빠진 게 아니다. 0 이다.\n\n` +
+    `4) SERIOUS — 이 발언이 제대로 된 답을 원하는가?\n` +
+    `   YES: 뭔가를 설명해 달라고 함. 사실을 물음. 방법이나 원인을 물음.\n` +
+    `        모르는 것을 알고 싶어함. 도움을 요청함.\n` +
+    `        게임 하다 딴 게 궁금해져서 물어보는 것도 YES 다.\n` +
+    `   NO:  잡담, 인사, 농담, 감탄사, 욕, 단답.\n` +
+    `        감정 표현. 클리피를 놀리거나 떠보는 말.\n` +
+    `   애매하면 NO 다. 잡담에 긴 설명이 나오면 그게 더 나쁘다.\n\n` +
+    `5) SEARCH — 답하려면 웹에서 찾아봐야 하는가?\n` +
+    `   YES: 최근 소식, 지금 시세나 가격, 최신 버전, 날씨,\n` +
+    `        특정 인물·제품·서비스의 현재 상태, 언제 무슨 일이 있었는지.\n` +
+    `        모델이 알 리 없거나 오래돼서 틀렸을 법한 구체적 사실.\n` +
+    `   NO:  개념 설명, 원리, 계산, 코드, 의견, 잡담, 감정.\n` +
+    `        이미 널리 알려진 일반 지식.\n` +
+    `   애매하면 NO 다. 검색은 느리고 비싸다.\n\n` +
+    `6) NOTES — 적어둔 메모 목록을 봐야 하는가?\n` +
+    `   YES: 뭘 적어뒀는지 묻거나, 할 일을 묻거나, 새로 적어달라고 하거나,\n` +
+    `        다 했다고 알리거나, 적어둔 것을 고치거나 지우려 할 때.\n` +
+    `   NO:  그 외 전부. 메모와 무관한 대화.\n\n` +
     `출력 형식을 정확히 지켜라. 다른 말은 쓰지 마라.\n` +
     `SCREEN: YES 또는 NO\n` +
     `SULK: 숫자\n` +
-    `ATTACH: 숫자`;
+    `ATTACH: 숫자\n` +
+    `SERIOUS: YES 또는 NO\n` +
+    `SEARCH: YES 또는 NO\n` +
+    `NOTES: YES 또는 NO`;
 
   try {
     const body: any = {
@@ -464,11 +637,19 @@ async function judge(message: string, occasion: "reply" | "greet" = "reply"): Pr
       needScreen: screen,
       dSulk: num("SULK"),
       dAttach: num("ATTACH"),
+      serious: /SERIOUS:\s*YES/i.test(answer),
+      search: /SEARCH:\s*YES/i.test(answer),
+      notes: /NOTES:\s*YES/i.test(answer),
     };
 
     logDebug(
       "판정",
-      `화면 ${result.needScreen ? "YES" : "NO"} · 삐짐 ${result.dSulk >= 0 ? "+" : ""}${result.dSulk} · 애착 ${result.dAttach >= 0 ? "+" : ""}${result.dAttach}`,
+      `화면 ${result.needScreen ? "YES" : "NO"}` +
+        ` · 진지 ${result.serious ? "YES" : "NO"}` +
+        ` · 검색 ${result.search ? "YES" : "NO"}` +
+        ` · 메모 ${result.notes ? "YES" : "NO"}` +
+        ` · 삐짐 ${result.dSulk >= 0 ? "+" : ""}${result.dSulk}` +
+        ` · 애착 ${result.dAttach >= 0 ? "+" : ""}${result.dAttach}`,
       `[클리피 속마음]\n${lastInner || "(없음)"}\n\n` +
         `[보낸 질문]\n${prompt}\n\n[모델 답]\n${answer || "(빈 응답)"}\n\n` +
         `${"=".repeat(40)}\n[같이 보낸 시스템 지침 — 카드·기억·감정 포함]\n${sys || "(없음)"}`,
@@ -488,11 +669,14 @@ export async function* sendMessage(message: string): AsyncGenerator<string> {
   let text = message;
 
   const verdict = await judge(message);
+  seriousMode = verdict.serious;
+  searchMode = verdict.search;
+  notesMode = verdict.notes;
   const applied = applyDelta(verdict.dAttach, verdict.dSulk);
   logDebug(
     "판정",
-    `감정 반영 · 애착 ${fmt(applied.appliedAttach)} → ${applied.emotions.attachment.toFixed(2)}` +
-      ` · 삐짐 ${fmt(applied.appliedSulk)} → ${applied.emotions.sulk.toFixed(2)}`,
+    `감정 · 애착 ${describeDelta(applied.appliedAttach, applied.emotions.attachment)}` +
+      ` · 삐짐 ${describeDelta(applied.appliedSulk, applied.emotions.sulk)}`,
     `판정이 낸 값: 애착 ${fmt(verdict.dAttach)}, 삐짐 ${fmt(verdict.dSulk)}\n` +
       `실제 반영된 값: 애착 ${fmt(applied.appliedAttach)}, 삐짐 ${fmt(applied.appliedSulk)}\n\n` +
       `애착은 높을수록 오르기 어렵고 떨어지기도 어렵게 저항이 걸립니다.\n` +
@@ -528,6 +712,9 @@ export async function* sendMessage(message: string): AsyncGenerator<string> {
 
 export function speakUnprompted(observation: string): AsyncGenerator<string> {
   pendingOccasion = "trigger";
+  seriousMode = false;
+  searchMode = false;
+  notesMode = false;
   history.push({
     role: "user",
     parts: [
@@ -555,6 +742,9 @@ export function speakUnprompted(observation: string): AsyncGenerator<string> {
 /** 강제 소환 — 사용자가 단축키로 불러냈을 때 */
 export function summoned(observation: string): AsyncGenerator<string> {
   pendingOccasion = "summon";
+  seriousMode = false;
+  searchMode = false;
+  notesMode = false;
   history.push({
     role: "user",
     parts: [
@@ -576,17 +766,48 @@ export function summoned(observation: string): AsyncGenerator<string> {
   return callGemini();
 }
 
+/** 리마인더 시각이 됐을 때. 조건 무시하고 튀어나온다. */
+export function remind(notes: { id: string; text: string }[]): AsyncGenerator<string> {
+  pendingOccasion = "trigger";
+  seriousMode = false;
+  searchMode = false;
+  notesMode = true;
+
+  const lines = notes.map((n) => `- ${n.text}`).join("\n");
+
+  history.push({
+    role: "user",
+    parts: [
+      {
+        text:
+          `[SYSTEM — 사용자가 보낸 메시지가 아니다.]\n\n` +
+          `${situationBoard("trigger")}` +
+          `적어둔 것 중에 지금 알리기로 한 시각이 된 게 있다.\n\n${lines}\n\n` +
+          `이걸 알려라. 한두 문장.\n` +
+          `- 사무적으로 읽지 마라. 네 방식대로 짚어라.\n` +
+          `- 여러 개면 묶어서 한 번에.\n` +
+          `- 다 했다고 하면 다음 턴에 <done> 으로 지워주면 된다.`,
+      },
+    ],
+  });
+
+  return callGemini();
+}
+
 /** 앱 켰을 때 첫 인사. 저장된 기억과 지금 기분을 반영해 지어낸다. */
 export async function* greet(): AsyncGenerator<string> {
   pendingOccasion = "greet";
 
   // 얼마 만에 다시 왔는지를 판정에 태워서 감정을 먼저 움직인다
   const verdict = await judge("(사용자가 앱을 켰다)", "greet");
+  seriousMode = false;
+  searchMode = false;
+  notesMode = false;
   const applied = applyDelta(verdict.dAttach, verdict.dSulk);
   logDebug(
     "판정",
-    `감정 반영 · 애착 ${fmt(applied.appliedAttach)} → ${applied.emotions.attachment.toFixed(2)}` +
-      ` · 삐짐 ${fmt(applied.appliedSulk)} → ${applied.emotions.sulk.toFixed(2)}`,
+    `감정 · 애착 ${describeDelta(applied.appliedAttach, applied.emotions.attachment)}` +
+      ` · 삐짐 ${describeDelta(applied.appliedSulk, applied.emotions.sulk)}`,
     `판정이 낸 값: 애착 ${fmt(verdict.dAttach)}, 삐짐 ${fmt(verdict.dSulk)}\n` +
       `실제 반영된 값: 애착 ${fmt(applied.appliedAttach)}, 삐짐 ${fmt(applied.appliedSulk)}`,
   );

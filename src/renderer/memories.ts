@@ -14,7 +14,9 @@ export type Memory = {
 };
 
 const KEY = "clippy.memories.v1";
-const MAX_PROMPT_CHARS = 4000;
+// 프롬프트에 들어갈 기억의 최대 길이.
+// 한국어 기준 대략 9000 토큰쯤. 넘으면 오래된 것부터 빠진다.
+export const MAX_PROMPT_CHARS = 15000;
 
 export function loadMemories(): Memory[] {
   try {
@@ -98,6 +100,11 @@ export function formatRangeLong(m: Memory): string {
 }
 
 /** 시스템 프롬프트에 붙일 블록. 너무 길면 오래된 것부터 잘라낸다. */
+/** 지금 기억이 한도의 얼마를 쓰고 있는지 */
+export function memoryUsage(): { used: number; max: number } {
+  return { used: buildMemoryBlock().length, max: MAX_PROMPT_CHARS };
+}
+
 export function buildMemoryBlock(): string {
   const list = loadMemories();
   if (!list.length) return "";
