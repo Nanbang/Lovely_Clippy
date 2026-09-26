@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { clippyApi } from "../clippyApi";
+import { loadUsage, resetUsage } from "../gemini";
 import {
   loadEmotions,
   resetEmotions,
@@ -281,6 +282,66 @@ function EmotionPanel() {
   );
 }
 
+function UsagePanel() {
+  const [, bump] = useState(0);
+  const u = loadUsage();
+
+  useEffect(() => {
+    const t = setInterval(() => bump((n) => n + 1), 4000);
+    return () => clearInterval(t);
+  }, []);
+
+  // 플래시 기준 대략치. 정확한 청구는 콘솔에서 확인할 것.
+  const cost = (u.inputTokens / 1e6) * 0.5 + (u.outputTokens / 1e6) * 3;
+
+  return (
+    <fieldset>
+      <legend>오늘 토큰</legend>
+      <table style={{ borderCollapse: "collapse", fontSize: "0.9em" }}>
+        <tbody>
+          <tr>
+            <td style={{ paddingRight: 10 }}>호출</td>
+            <td>{u.calls.toLocaleString()}회</td>
+          </tr>
+          <tr>
+            <td style={{ paddingRight: 10 }}>입력</td>
+            <td>
+              {u.inputTokens.toLocaleString()}
+              {u.cachedTokens > 0 && (
+                <span style={{ color: "#008000" }}>
+                  {" "}
+                  (캐시 {u.cachedTokens.toLocaleString()})
+                </span>
+              )}
+            </td>
+          </tr>
+          <tr>
+            <td style={{ paddingRight: 10 }}>출력</td>
+            <td>{u.outputTokens.toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td style={{ paddingRight: 10 }}>대략</td>
+            <td>${cost.toFixed(3)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div className="field-row" style={{ marginTop: 4 }}>
+        <button
+          onClick={() => {
+            resetUsage();
+            bump((n) => n + 1);
+          }}
+        >
+          초기화
+        </button>
+      </div>
+      <div style={{ marginTop: 4, fontSize: "0.85em", color: "#555" }}>
+        날짜가 바뀌면 자동으로 0부터 다시 셉니다. 비용은 플래시 단가 기준 어림값입니다.
+      </div>
+    </fieldset>
+  );
+}
+
 export function SettingsDebug() {
   const [, force] = useState(0);
   const [openId, setOpenId] = useState<number | null>(null);
@@ -299,6 +360,7 @@ export function SettingsDebug() {
   return (
     <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
       <LivePanel />
+      <UsagePanel />
       <EmotionPanel />
 
       <div className="field-row" style={{ gap: 6 }}>

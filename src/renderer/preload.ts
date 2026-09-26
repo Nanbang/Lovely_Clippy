@@ -123,6 +123,9 @@ contextBridge.exposeInMainWorld("clippyWatcher", {
   offLive: () => {
     ipcRenderer.removeAllListeners("clippy-live");
   },
+  setChatVisible: (visible: boolean) => {
+    ipcRenderer.send("clippy-set-chat-visible", visible);
+  },
   getIdleSeconds: (): Promise<number> =>
     ipcRenderer.invoke("clippy-idle-seconds"),
   quit: () => {

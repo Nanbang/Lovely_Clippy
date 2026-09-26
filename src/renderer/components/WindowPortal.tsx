@@ -98,7 +98,9 @@ export function WindowPortal({
         externalDoc.body.innerHTML = "";
         externalDoc.body.appendChild(containerDiv);
       } else {
-        await clippyApi.toggleChatWindow();
+        // toggleChatWindow 는 뒤집기라서 이미 열려 있으면 꺼진다.
+        // 명시적으로 "보이게 해라" 를 보낸다.
+        (window as any).clippyWatcher?.setChatVisible?.(true);
       }
 
       _externalWindow.focus();
@@ -108,7 +110,7 @@ export function WindowPortal({
     const hideWindow = async () => {
       // Don't destroy the window, just hide it
       if (_externalWindow && !_externalWindow.closed) {
-        await clippyApi.toggleChatWindow();
+        (window as any).clippyWatcher?.setChatVisible?.(false);
       }
     };
 

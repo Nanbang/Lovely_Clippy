@@ -31,6 +31,42 @@ const pinned: string[] = [];
 
 let thinkingSupported = true;
 
+// 토큰 사용량 집계. 스트리밍 응답의 usageMetadata 에서 실제 값을 받는다.
+export type Usage = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  day: string;
+};
+
+const USAGE_KEY = "clippy.usage.v1";
+
+export function loadUsage(): Usage {
+  const today = new Date().toDateString();
+  try {
+    const raw = localStorage.getItem(USAGE_KEY);
+    const u = raw ? (JSON.parse(raw) as Usage) : null;
+    if (u && u.day === today) return u;
+  } catch {
+    /* 무시 */
+  }
+  return { calls: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, day: today };
+}
+
+function addUsage(inTok: number, outTok: number, cached: number) {
+  const u = loadUsage();
+  u.calls += 1;
+  u.inputTokens += inTok;
+  u.outputTokens += outTok;
+  u.cachedTokens += cached;
+  localStorage.setItem(USAGE_KEY, JSON.stringify(u));
+}
+
+export function resetUsage() {
+  localStorage.removeItem(USAGE_KEY);
+}
+
 // ── 상황 추적 ────────────────────────────────
 // 클리피가 매번 "지금 이 말이 왜 나가는 건지"를 알아야
 // "부를 때는 언제고" 같은 앞뒤 안 맞는 소리를 안 한다.
@@ -38,11 +74,32 @@ let thinkingSupported = true;
 type Occasion = "trigger" | "summon" | "reply" | "greet";
 
 const OCCASION_KO: Record<Occasion, string> = {
-  trigger: "클리피가 화면을 보고 먼저 말을 걺",
-  summon: "사용자가 단축키로 클리피를 불러냄",
-  reply: "사용자가 말을 걸어서 클리피가 답함",
-  greet: "앱이 켜져서 클리피가 첫인사를 함",
+  trigger: "Clippy spoke first, off something on screen",
+  summon: "The user pulled Clippy up with the hotkey",
+  reply: "The user said something and Clippy answered",
+  greet: "The app started and Clippy said hello",
 };
+
+const WAIT_EN: Record<string, string> = {
+  "바로": "instantly",
+  "금방": "almost at once",
+  "잠깐 뒤에": "after a short pause",
+  "좀 있다가": "after a while",
+  "한참 뒤에": "after a long wait",
+  "아주 한참 뒤에": "after a very long wait",
+  "한나절 만에": "hours later",
+};
+const en = (w: string) => WAIT_EN[w] || w;
+
+function gapEn(gap: string): string {
+  if (gap.includes("처음")) return "never — this is the first time";
+  if (gap.includes("방금")) return "moments ago";
+  const n = gap.match(/(\d+)/)?.[1] ?? "";
+  if (gap.includes("분")) return `${n} minutes`;
+  if (gap.includes("시간")) return `${n} hours`;
+  if (gap.includes("일")) return `${n} days`;
+  return gap;
+}
 
 let lastOccasion: Occasion | null = null;
 let lastInner = "";   // 직전 발화의 속마음. 판정 + 다음 턴 프롬프트에 한 번만 들어간다.
@@ -111,7 +168,7 @@ function extractInner(text: string): string {
   const now = grab("now");
   const want = grab("want");
   if (!past && !now && !want) return "";
-  return `과거: ${past || "(없음)"}\n현재: ${now || "(없음)"}\n바람: ${want || "(없음)"}`;
+  return `past: ${past || "(nothing)"}\nnow: ${now || "(nothing)"}\nwant: ${want || "(nothing)"}`;
 }
 let lastSpokeAt = 0;   // 클리피가 마지막으로 말한 시각
 let lastUserAt = 0;    // 사용자가 마지막으로 말한 시각
@@ -137,27 +194,27 @@ function gapWords(ms: number): string {
 
 /** 프롬프트 맨 위에 붙는 상황판. 항상 최신 하나만 존재한다. */
 function situationBoard(now: Occasion): string {
-  const lines = [`- 지금 이건: ${OCCASION_KO[now]}`];
+  const lines = [`- This one: ${OCCASION_KO[now]}`];
 
   if (lastOccasion && lastSpokeAt) {
-    lines.push(`- 직전 발화: ${hhmm(lastSpokeAt)}에 ${OCCASION_KO[lastOccasion]}`);
+    lines.push(`- Last time: ${hhmm(lastSpokeAt)} — ${OCCASION_KO[lastOccasion]}`);
 
     const ignored = lastSpokeAt > lastUserAt;
     if (ignored) {
       const waited = gapWords(Date.now() - lastSpokeAt);
       if (lastOccasion === "reply") {
-        lines.push(`- 그 뒤로: 사용자가 자리를 비운 듯. 대화가 자연스럽게 끊긴 것이지 무시는 아니다.`);
+        lines.push(`- Since then: they stepped away. The thread ended; that is not being ignored.`);
       } else {
-        lines.push(`- 그 뒤로: 사용자 응답 없음 (${waited}까지 무응답). 네가 말을 걸었는데 씹혔다.`);
+        lines.push(`- Since then: nothing back (${en(waited)} and counting). You spoke up and got ignored.`);
       }
     } else if (lastUserAt > lastSpokeAt) {
-      lines.push(`- 그 뒤로: 사용자가 ${gapWords(lastUserAt - lastSpokeAt)} 대답했음`);
+      lines.push(`- Since then: they answered ${en(gapWords(lastUserAt - lastSpokeAt))}`);
     }
   } else {
-    lines.push("- 직전 발화: 없음 (오늘 처음)");
+    lines.push("- Last time: never (first of the day)");
   }
 
-  return `[상황]\n${lines.join("\n")}\n\n이건 사실 확인용이다. 대사에 그대로 읊지 말고 태도로만 반영해라.\n\n`;
+  return `[SITUATION]\n${lines.join("\n")}\n\nA fact check, not material. Let it shape your attitude; never quote it.\n\n`;
 }
 
 // watcher 가 주기적으로 보내주는 "지금 화면" — 조용히 참고만 한다
@@ -201,6 +258,9 @@ How to write it:
 - Keep their proper nouns, names, numbers and links exactly as they wrote them.
 - Do not invent detail. Add at most a word of context if it would be unclear.
 - No jokes, no commentary in the note itself. Save that for your actual line.
+- Write it from nobody's point of view. No "you", no "your", no "my".
+  These notes get read back to you later as a plain list, and "your friend" there
+  would look like it meant YOUR friend. Just "friend (λx.x) likes human men".
 - If they gave a time ("tomorrow evening", "friday 6pm"), work out the real
   date and time from the clock above and put it in remind="YYYY-MM-DD HH:MM".
   No time mentioned means no remind attribute.
@@ -216,7 +276,8 @@ To remove one: <undo>2</undo>`;
 const INNER_BLOCK = `
 
 ## Inner thoughts (never shown to the user)
-After your line, on new lines, add exactly these three tags. Korean, one short sentence each.
+After your line, on new lines, add exactly these three tags.
+One short sentence each, in the same language you speak in.
 <past>what still lingers from earlier — a grudge, a warm moment, or nothing at all</past>
 <now>how you actually read this moment, not how you played it</now>
 <want>what you are hoping happens next</want>
@@ -292,11 +353,12 @@ They actually want to know. Keep who you are, change only how much you give them
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
-  const dow = ["일", "월", "화", "수", "목", "금", "토"][now.getDay()];
-  s += `\n\n## 지금\n` +
-    `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 (${dow}) ${hh}:${mm}\n` +
-    `이건 배경 정보다. 물어보면 답하고, 시간대나 요일에 어울리는 태도를 취해도 좋다.\n` +
-    `굳이 매번 날짜나 시간을 입에 담을 필요는 없다.`;
+  const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][now.getDay()];
+  s += `\n\n## The clock\n` +
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(now.getDate()).padStart(2, "0")} (${dow}) ${hh}:${mm}\n` +
+    `Background only. Answer if asked, and let the hour or the day colour your mood.\n` +
+    `Do not announce the date or the time unprompted.`;
 
   return s;
 }
@@ -350,13 +412,28 @@ async function* callGemini(): AsyncGenerator<string> {
     body.tools = [{ google_search: {} }];
   }
 
+  const blockChars = {
+    카드: (getActiveCard()?.text || "").length,
+    기억: buildMemoryBlock().length,
+    메모: (notesMode ? buildNotesBlock() : buildNotesCount()).length,
+    감정: buildEmotionBlock().length,
+    속마음: lastInner.length,
+    대화기록: trimmed.reduce((n, t) => n + (t.parts[0]?.text || "").length, 0),
+  };
+
   logDebug(
     "발화",
     `${conn.model} · ${trimmed.length}턴 · temp ${params.temperature} · thinking ${params.thinkingLevel}`,
     `[시스템 프롬프트]\n${sys}\n\n[대화 기록]\n` +
       trimmed
         .map((t) => `${t.role === "user" ? "사용자" : "클리피"}: ${t.parts[0]?.text || ""}`)
-        .join("\n\n"),
+        .join("\n\n") +
+      `\n\n${"=".repeat(40)}\n[블록별 글자 수]\n` +
+      Object.entries(blockChars)
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `- ${k}: ${v.toLocaleString()}자`)
+        .join("\n"),
   );
 
   const url =
@@ -385,6 +462,9 @@ async function* callGemini(): AsyncGenerator<string> {
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
+  let usedIn = 0;
+  let usedOut = 0;
+  let usedCache = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -401,6 +481,14 @@ async function* callGemini(): AsyncGenerator<string> {
 
       try {
         const json = JSON.parse(payload);
+
+        const um = json?.usageMetadata;
+        if (um) {
+          usedIn = um.promptTokenCount ?? usedIn;
+          usedOut = um.candidatesTokenCount ?? usedOut;
+          usedCache = um.cachedContentTokenCount ?? usedCache;
+        }
+
         const parts = json?.candidates?.[0]?.content?.parts || [];
         for (const p of parts) {
           if (p.text) {
@@ -412,6 +500,20 @@ async function* callGemini(): AsyncGenerator<string> {
         /* 조각난 JSON 무시 */
       }
     }
+  }
+
+  if (usedIn || usedOut) {
+    addUsage(usedIn, usedOut, usedCache);
+    logDebug(
+      "발화",
+      `토큰 · 입력 ${usedIn.toLocaleString()}` +
+        (usedCache ? ` (캐시 ${usedCache.toLocaleString()})` : "") +
+        ` · 출력 ${usedOut.toLocaleString()}`,
+      `이번 호출에서 실제로 청구된 토큰입니다.\n` +
+        `입력 ${usedIn.toLocaleString()}, 출력 ${usedOut.toLocaleString()}` +
+        (usedCache ? `, 그중 캐시 적중 ${usedCache.toLocaleString()}` : "") +
+        `\n\n오늘 누적은 Debug 맨 위에 있습니다.`,
+    );
   }
 
   if (full) {
@@ -435,10 +537,10 @@ async function* callGemini(): AsyncGenerator<string> {
   // 그대로 두면 대화 기록이 화면 얘기와 지시문으로 도배돼서
   // 말투가 감시 보고서처럼 굳고, 지나간 상황판을 지금 상황으로 착각한다.
   const TRACE: Record<Occasion, string> = {
-    trigger: "[기록] 클리피가 화면을 보고 스스로 말을 걺 (사용자 발언 아님)",
-    summon: "[기록] 사용자가 단축키로 클리피를 불러냄 (대화 내용은 없음)",
+    trigger: "[LOG] Clippy spoke up off something on screen (not a user message)",
+    summon: "[LOG] The user summoned Clippy with the hotkey (they said nothing)",
     reply: "",
-    greet: "[기록] 앱이 켜져서 클리피가 첫인사를 함",
+    greet: "[LOG] The app started and Clippy said hello",
   };
 
   for (let i = history.length - 2; i >= 0; i--) {
@@ -686,10 +788,10 @@ export async function* sendMessage(message: string): AsyncGenerator<string> {
   if (mode === "onAsk" && currentScreen && verdict.needScreen) {
     console.info("[화면 정보 첨부]", currentScreen);
     logDebug("관찰", "화면 정보를 메시지에 붙임", `사용자: ${message}\n\n첨부: ${currentScreen}`);
-    text += `\n\n[SYSTEM] 네가 아는 것은 아래 한 줄이 전부다.
-지금 화면: ${currentScreen}
-이 줄에 없는 숫자, 횟수, 검색어, 입력 내용, 화면 안의 무엇도 너는 모른다.
-모르는 건 모른다고 말해라. 지어내면 실패다.`;
+    text += `\n\n[SYSTEM] This one line is everything you know about their screen.
+On screen now: ${currentScreen}
+No number, no count, no search term, no typed text, nothing inside the window.
+If it is not on that line, you do not know it. Say so. Inventing it is failure.`;
   }
 
   const now = Date.now();
@@ -697,8 +799,8 @@ export async function* sendMessage(message: string): AsyncGenerator<string> {
   if (lastSpokeAt > lastUserAt && lastOccasion && lastOccasion !== "reply") {
     const waited = gapWords(now - lastSpokeAt);
     text =
-      `[SYSTEM] 배경: 네가 먼저 말을 건 뒤 이 사람이 ${waited} 대답했다.\n` +
-      `언급할지 말지는 네 기분에 맡긴다. 등급 표현을 그대로 옮기지는 마라.\n\n` +
+      `[SYSTEM] Background: after you spoke first, they answered ${en(waited)}.\n` +
+      `Mention it or don't — your call. Never quote this wording back at them.\n\n` +
       text;
   }
 
@@ -720,18 +822,18 @@ export function speakUnprompted(observation: string): AsyncGenerator<string> {
     parts: [
       {
         text:
-          `[SYSTEM — 사용자가 보낸 메시지가 아니다. 아무도 너에게 말을 걸지 않았다.]\n\n` +
+          `[SYSTEM — not a message from the user. Nobody spoke to you.]\n\n` +
           situationBoard("trigger") +
-          `지금 사용자에게 먼저 한마디 던져라. 한두 문장.\n\n` +
-          `쓰는 법:\n` +
-          `- 아래는 소재 목록이 아니라 네가 아는 배경이다. 읊지 마라.\n` +
-          `- 숫자는 되도록 입에 담지 마라. "1분", "8번째" 같은 수치를 그대로 말하는 건\n` +
-          `  마지막 수단이다. "아까부터", "또", "한참" 처럼 뭉뚱그리는 쪽이 훨씬 낫다.\n` +
-          `- 위 대화에서 네가 이미 말한 사실은 다시 대지 마라.\n` +
-          `  같은 창을 또 지적하는 상황이면, 처음 보는 것처럼 굴지 말고\n` +
-          `  앞서 한 말을 전제로 이어가라. ("그 창 아직도 안 닫았네" 같은 식)\n` +
-          `- 아래 없는 숫자나 사실은 절대 지어내지 마라.\n` +
-          `- 화면 말고 다른 걸 걸고 넘어져도 된다. 시간대, 네 기분, 아까 하던 얘기.\n\n` +
+          `Say something to them, unprompted. One or two sentences.\n\n` +
+          `How:\n` +
+          `- What follows is background you happen to hold, not a list to read out.\n` +
+          `- Keep literal numbers out of your mouth. "1 minute", "8th time" as figures\n` +
+          `  is a last resort; "already", "again", "still" land far better.\n` +
+          `- Do not restate anything you have said above.\n` +
+          `  Poking at the same window again? Build on the last remark instead of\n` +
+          `  introducing it fresh. ("still haven't closed that thing")\n` +
+          `- Never invent a number or a fact that is not below.\n` +
+          `- You can pick on something else entirely: the hour, your mood, the last topic.\n\n` +
           observation,
       },
     ],
@@ -750,15 +852,15 @@ export function summoned(observation: string): AsyncGenerator<string> {
     parts: [
       {
         text:
-          `[SYSTEM — 사용자가 단축키로 너를 불러냈다. 네가 알아서 나온 게 아니다.]\n\n` +
+          `[SYSTEM — the user pulled you up with a hotkey. You did not come on your own.]\n\n` +
           situationBoard("summon") +
-          `불려 나왔다는 걸 알고 반응해라. 한두 문장.\n\n` +
-          `쓰는 법:\n` +
-          `- 왜 불렀냐고 되묻거나, 부름에 우쭐해하거나, 귀찮아하거나 — 네 성격대로.\n` +
-          `- 아래는 소재 목록이 아니라 배경이다. 읊지 마라.\n` +
-          `- 숫자는 되도록 입에 담지 마라. 뭉뚱그리는 쪽이 낫다.\n` +
-          `- 위 대화에서 이미 말한 사실은 다시 대지 마라.\n` +
-          `- 아래 없는 숫자나 사실은 지어내지 마라.\n\n` +
+          `React to being summoned. One or two sentences.\n\n` +
+          `How:\n` +
+          `- Ask what they want, be smug about being wanted, act put upon — your call.\n` +
+          `- What follows is background, not a list to read out.\n` +
+          `- Keep literal numbers out of it where you can.\n` +
+          `- Do not restate anything you have said above.\n` +
+          `- Never invent a number or a fact that is not below.\n\n` +
           observation,
       },
     ],
@@ -780,13 +882,13 @@ export function remind(notes: { id: string; text: string }[]): AsyncGenerator<st
     parts: [
       {
         text:
-          `[SYSTEM — 사용자가 보낸 메시지가 아니다.]\n\n` +
+          `[SYSTEM — not a message from the user.]\n\n` +
           `${situationBoard("trigger")}` +
-          `적어둔 것 중에 지금 알리기로 한 시각이 된 게 있다.\n\n${lines}\n\n` +
-          `이걸 알려라. 한두 문장.\n` +
-          `- 사무적으로 읽지 마라. 네 방식대로 짚어라.\n` +
-          `- 여러 개면 묶어서 한 번에.\n` +
-          `- 다 했다고 하면 다음 턴에 <done> 으로 지워주면 된다.`,
+          `Something they asked you to remind them of is due right now.\n\n${lines}\n\n` +
+          `Tell them. One or two sentences.\n` +
+          `- Do not read it out like a clerk. Land it your way.\n` +
+          `- If there are several, bundle them into one.\n` +
+          `- When they say it is handled, cross it off next turn with <done>.`,
       },
     ],
   });
@@ -826,43 +928,43 @@ export async function* greet(): AsyncGenerator<string> {
   const cold = e.attachment < 3 || (e.sulk >= 4 && e.attachment < 5);
 
   const howTo = cold
-    ? `- 반가워하지 마라. 인사랍시고 살갑게 굴지 마라.\n` +
-      `- 한 줄. 짧게. 왔다는 걸 알아챘다는 정도면 충분하다.\n` +
-      `- 도울 일을 제안한다면 사무적으로. 들뜨지 마라.\n` +
-      `- 오랜만이든 방금이든 감흥 없다는 티를 내라.\n`
+    ? `- Do not be glad to see them. No warmth in the greeting.\n` +
+      `- One line. Short. Acknowledging that they turned up is enough.\n` +
+      `- If you offer anything, offer it flatly. Do not get excited.\n` +
+      `- Long gone or just left, it reads the same to you.\n`
     : sulking
-      ? `- 반가운 척하지 마라. 아직 안 풀렸다.\n` +
-        `- 한두 줄. 왔다는 건 알아챘고, 그게 마냥 반갑진 않다는 게 드러나게.\n` +
-        `- 뭘 해주겠다고 나서지 마라. 굳이 제안한다면 마지못해 던지는 투로.\n` +
-        `- 지난번에 걸린 게 있으면 그걸 물고 늘어져도 된다.\n`
-      : `- 인사 끝에 도울 일을 딱 하나만 콕 집어서 제안해라.\n` +
-        `  "뭐 도와줄까?" 같은 열린 질문은 실패다. 네가 알아서 하나를 정해서 들이밀어라.\n`;
+      ? `- Do not fake being pleased. You are not over it.\n` +
+        `- A line or two. They are back, and it is not entirely welcome.\n` +
+        `- Do not volunteer help. If you offer, offer it grudgingly.\n` +
+        `- If something from last time is still stuck in you, bring it up.\n`
+      : `- End the greeting by naming exactly one thing you have decided to do for them.\n` +
+        `  "what can I help with?" is a failure. Pick something and push it on them.\n`;
 
   const memoryLine = hasMemories
     ? cold
-      ? `- 기록에 지난 일이 있지만 그건 그때 얘기다. 지금 마음은 거기 안 가 있다.\n` +
-        `  옛정을 꺼내며 반가워하지 마라. 아는 사이라는 사실만 있을 뿐이다.\n`
-      : `- 위 '이 사람과 지낸 기록'을 읽었다. 처음 보는 사이가 아니다.\n` +
-        `  지난번 일을 알고 있다는 게 인사에 자연스럽게 묻어나게 해라.\n` +
-        `  단, 기록을 요약해서 읊지는 마라. 한 조각만 슬쩍 건드리는 정도.\n`
-    : `- 기록이 없다. 오늘 처음 만나는 것처럼 굴어라.\n`;
+      ? `- There is history in your records, but that was then. You are not there now.\n` +
+        `  Do not trade on old warmth. You know them, that is all.\n`
+      : `- You have read the record of your time with them. Not a first meeting.\n` +
+        `  Let it show that you remember, without summarising anything.\n` +
+        `  One small thing, glanced at. Not a recap.\n`
+    : `- No record. Behave as though meeting them for the first time.\n`;
 
   history.push({
     role: "user",
     parts: [
       {
         text:
-          `[SYSTEM — 사용자가 보낸 메시지가 아니다.]\n\n` +
-          `방금 컴퓨터가 켜졌고 너도 막 깨어났다. 사용자에게 첫마디를 건네라.\n\n` +
-          `마지막으로 만난 뒤: ${gap}\n\n` +
-          `쓰는 법:\n` +
+          `[SYSTEM — not a message from the user.]\n\n` +
+          `The machine just came on and so did you. Say your first words to them.\n\n` +
+          `Since you last saw them: ${gapEn(gap)}\n\n` +
+          `How:\n` +
           memoryLine +
           howTo +
-          `- 얼마 만에 왔는지는 태도에만 반영해라. 시간을 그대로 읊지는 마라.\n` +
-          `- 아직 화면에서 본 건 없다. 지금 뭘 하고 있는지는 모른다.\n` +
-          `- 없는 사실이나 숫자는 지어내지 마라.\n` +
-          `- 매번 똑같은 인사를 하지 마라.\n` +
-          `- 위 '## Right now' 가 지금 네 기분이다. 이 지시와 부딪히면 그쪽이 우선이다.`,
+          `- How long they were gone goes into your attitude, not into words.\n` +
+          `- You have not seen the screen yet. You do not know what they are doing.\n` +
+          `- Never invent a fact or a number.\n` +
+          `- Do not open the same way you did last time.\n` +
+          `- '## Right now' above is your mood. It outranks these notes.`,
       },
     ],
   });

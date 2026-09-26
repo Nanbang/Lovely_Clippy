@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Note, activeNotes, addNote, completeNote, deleteNote } from "../notes";
+import { Note, activeNotes, completeNote, deleteNote } from "../notes";
 import { BubbleWindowBottomBar } from "./BubbleWindowBottomBar";
 
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
@@ -34,19 +34,6 @@ export function PlanWindow({ onClose }: PlanWindowProps) {
     const d = new Date(cursor);
     d.setMonth(d.getMonth() + months);
     setCursor(d);
-  };
-
-  const addAt = (hour: number) => {
-    const text = prompt(
-      `${cursor.getMonth() + 1}/${cursor.getDate()} ${String(hour).padStart(2, "0")}:00 에 무엇을?`,
-    );
-    if (!text) return;
-
-    const when = new Date(cursor);
-    when.setHours(hour, 0, 0, 0);
-    const res = addNote(text, when.getTime());
-    if (typeof res === "string") alert(res);
-    refresh();
   };
 
   // ── 하루 보기 ──────────────────────────────
@@ -94,11 +81,7 @@ export function PlanWindow({ onClose }: PlanWindowProps) {
                 {String(h).padStart(2, "0")}
               </div>
 
-              <div
-                style={{ flex: 1, padding: "2px 4px", cursor: "pointer" }}
-                onClick={() => here.length === 0 && addAt(h)}
-                title={here.length === 0 ? "눌러서 추가" : undefined}
-              >
+              <div style={{ flex: 1, padding: "2px 4px" }}>
                 {here.map((n) => (
                   <div
                     key={n.id}
@@ -293,7 +276,7 @@ export function PlanWindow({ onClose }: PlanWindowProps) {
 
         <div style={{ fontSize: "0.85em", color: "#555" }}>
           {mode === "day"
-            ? "빈 시간대를 누르면 새로 추가됩니다. 시각 없는 메모는 Save 창에 있습니다."
+            ? "클리피에게 말하면 여기에 생깁니다. 시각 없는 메모는 Save 창에 있습니다."
             : "날짜를 누르면 그날 시간표로 넘어갑니다."}
         </div>
       </div>

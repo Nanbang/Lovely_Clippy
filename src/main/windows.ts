@@ -255,6 +255,23 @@ export function toggleChatWindow() {
 }
 
 /**
+ * 창을 확실히 연다/닫는다.
+ * toggleChatWindow 는 말 그대로 뒤집기라서, "무조건 열어라" 용도로 쓰면
+ * 이미 열려 있을 때 꺼져 버린다. 클리피가 먼저 말을 걸 때 그 사고가 났다.
+ */
+export function setChatWindowVisible(visible: boolean) {
+  const chatWindow = getChatWindow();
+  if (!chatWindow) return;
+
+  if (visible === chatWindow.isVisible()) {
+    if (visible) chatWindow.focus();
+    return;
+  }
+
+  toggleChatWindow();
+}
+
+/**
  * Minimize the chat window
  */
 export function minimizeChatWindow() {

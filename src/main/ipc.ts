@@ -1,6 +1,7 @@
 import { clipboard, Data, ipcMain } from "electron";
 import {
   toggleChatWindow,
+  setChatWindowVisible,
   maximizeChatWindow,
   minimizeChatWindow,
 } from "./windows";
@@ -18,6 +19,9 @@ import { getDebugManager } from "./debug";
 export function setupIpcListeners() {
   // Window
   ipcMain.handle(IpcMessages.TOGGLE_CHAT_WINDOW, () => toggleChatWindow());
+  ipcMain.on("clippy-set-chat-visible", (_e, visible: boolean) =>
+    setChatWindowVisible(!!visible),
+  );
   ipcMain.handle(IpcMessages.MINIMIZE_CHAT_WINDOW, () => minimizeChatWindow());
   ipcMain.handle(IpcMessages.MAXIMIZE_CHAT_WINDOW, () => maximizeChatWindow());
   ipcMain.handle(IpcMessages.POPUP_APP_MENU, () => getMainAppMenu().popup());

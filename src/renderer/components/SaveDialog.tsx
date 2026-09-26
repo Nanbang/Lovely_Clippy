@@ -197,6 +197,7 @@ export function SaveDialog({ onClose, sessionStartedAt }: SaveDialogProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [mergeMode, setMergeMode] = useState(false);
   const [endedAt] = useState(Date.now());
+  const [tab, setTab] = useState<"summary" | "memo">("summary");
 
   useEffect(() => setList(loadMemories()), []);
 
@@ -278,9 +279,21 @@ export function SaveDialog({ onClose, sessionStartedAt }: SaveDialogProps) {
           overflowY: "auto",
         }}
       >
-        <UsageBar />
-        <NotesPanel />
+        <div className="field-row" style={{ gap: 4 }}>
+          <button disabled={tab === "summary"} onClick={() => setTab("summary")}>
+            요약 · 기억
+          </button>
+          <button disabled={tab === "memo"} onClick={() => setTab("memo")}>
+            메모
+          </button>
+        </div>
 
+        <UsageBar />
+
+        {tab === "memo" && <NotesPanel />}
+
+        {tab === "summary" && (
+          <>
         {/* 위: 요약 만들기 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <fieldset style={{ display: "flex", flexDirection: "column" }}>
@@ -410,6 +423,8 @@ export function SaveDialog({ onClose, sessionStartedAt }: SaveDialogProps) {
             </div>
           </fieldset>
         </div>
+          </>
+        )}
       </div>
 
       {note && (

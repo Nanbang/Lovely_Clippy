@@ -109,7 +109,7 @@ function when(t: number): string {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (sameDay) return `오늘 ${hm}`;
+  if (sameDay) return `today ${hm}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
@@ -119,14 +119,14 @@ export function buildNotesBlock(): string {
   if (!list.length) return "";
 
   const lines = list.map((n, i) => {
-    const mark = n.remindAt ? ` (알림: ${when(n.remindAt)})` : "";
+    const mark = n.remindAt ? ` (due ${when(n.remindAt)})` : "";
     return `[${i + 1}] ${n.text}${mark}`;
   });
 
   return (
-    `\n\n## 적어둔 것\n` +
-    `사용자가 적어달라고 한 것들이다.\n` +
-    `물어봤을 때 읊어주고, 필요하면 하나씩 짚어라. 전부 나열하지는 마라.\n\n` +
+    `\n\n## Things they asked you to note\n` +
+    `Read one back when they ask. Pick one out if it fits.\n` +
+    `Never list them all at once.\n\n` +
     lines.join("\n")
   );
 }
@@ -137,12 +137,12 @@ export function buildNotesCount(): string {
   if (!list.length) return "";
 
   const due = list.filter((n) => n.remindAt).length;
-  const extra = due ? `, 그중 ${due}개는 시각이 정해져 있다` : "";
+  const extra = due ? `, ${due} of them with a time attached` : "";
 
   return (
-    `\n\n(적어둔 메모가 ${list.length}개 있다${extra}. ` +
-    `내용은 지금 안 보인다. 물어보면 그때 확인한다. ` +
-    `괜히 먼저 꺼내지 마라.)`
+    `\n\n(${list.length} notes on file${extra}. ` +
+    `You cannot see what they say right now — you would have to look. ` +
+    `Do not bring them up unprompted.)`
   );
 }
 

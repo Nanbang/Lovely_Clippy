@@ -192,37 +192,39 @@ function describe(c, cand) {
   const m = (ms) => Math.round(ms / 60000);
   const rows = [];
 
-  rows.push(`프로그램: ${c.exe}`);
-  rows.push(`앱/사이트: ${c.label}`);
-  if (c.detail && c.detail !== c.label) rows.push(`창 제목: ${c.detail}`);
-  if (!c.registered) rows.push(`(이 사이트는 등록되지 않음 — 세부 항목은 알 수 없음)`);
+  rows.push(`Program: ${c.exe}`);
+  rows.push(`App or site: ${c.label}`);
+  if (c.detail && c.detail !== c.label) rows.push(`Window title: ${c.detail}`);
+  if (!c.registered) rows.push(`(this site is not registered — no detail available)`);
 
   const stare = m(now - detailStart);
-  if (stare >= 1) rows.push(`이 화면 그대로 본 시간: ${stare}분`);
+  if (stare >= 1) rows.push(`This exact screen, unchanged for: ${stare} min`);
 
   const site = m(now - siteStart);
-  if (site >= 1) rows.push(`이 앱/사이트에 머문 시간: ${site}분`);
+  if (site >= 1) rows.push(`Time on this app or site: ${site} min`);
 
   const visits = visitCount.get(c.detail) || 0;
-  if (visits >= 2) rows.push(`이 화면을 오늘 열어본 횟수: ${visits}번째`);
+  if (visits >= 2) rows.push(`Times this screen was opened today: ${visits}`);
 
   const total = Math.round((siteSeconds.get(c.site) || 0) / 60);
-  if (total >= 2) rows.push(`오늘 ${c.label}에 쓴 총 시간: ${total}분`);
+  if (total >= 2) rows.push(`Total time on ${c.label} today: ${total} min`);
 
   const items = new Set(since(itemLog, 30 * 60 * 1000, now).filter(r => r.site === c.site).map(r => r.item)).size;
-  if (items >= 2) rows.push(`최근 30분간 본 서로 다른 ${c.unit || '페이지'} 수: ${items}개`);
+  if (items >= 2) rows.push(`Distinct ${c.unit || 'pages'} in the last 30 min: ${items}`);
 
   const sw = since(switches, 4 * 60 * 1000, now).length;
-  if (sw >= 5) rows.push(`최근 4분간 창 전환 횟수: ${sw}번`);
+  if (sw >= 5) rows.push(`Window switches in the last 4 min: ${sw}`);
 
   const up = m(now - bootAt);
-  rows.push(up >= 1 ? `클리피가 지켜본 시간: ${up}분` : `클리피가 지켜본 시간: 1분 미만 (방금 켜짐)`);
+  rows.push(up >= 1
+    ? `You have been watching for: ${up} min`
+    : `You have been watching for: under a minute (just woke up)`);
 
   const h = new Date(now).getHours();
-  const part = h < 5 ? '새벽' : h < 12 ? '오전' : h < 18 ? '오후' : h < 23 ? '저녁' : '밤늦게';
-  rows.push(`지금 대략 ${part} ${h % 12 || 12}시쯤`);
+  const part = h < 5 ? 'the small hours' : h < 12 ? 'morning' : h < 18 ? 'afternoon' : h < 23 ? 'evening' : 'late night';
+  rows.push(`Roughly ${part}, around ${h}:00`);
 
-  return '[배경 — 네가 아는 것은 이게 전부다. 여기 없는 건 모른다.]\n'
+  return '[BACKGROUND — this is everything you know. Anything not here, you do not know.]\n'
     + rows.map(r => '- ' + r).join('\n');
 }
 

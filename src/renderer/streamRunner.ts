@@ -71,6 +71,11 @@ export function filterMessageContent(content: string): {
 /** 본문 어디에 있든 [애니메이션이름] 형태를 지운다 */
 function stripInlineTags(text: string): string {
   return text
+    // 메모 태그는 대사가 아니다. 저장은 gemini 쪽에서 따로 처리한다.
+    .replace(/<memo(?:\s+remind="[^"]*")?>[\s\S]*?<\/memo>/g, "")
+    .replace(/<(done|undo)>\d*<\/\1>/g, "")
+    .replace(/<\/?memo[^>]*>/g, "")
+    .replace(/<\/?(done|undo)>/g, "")
     .replace(/\[[A-Za-z_][A-Za-z0-9_]*\]/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
@@ -83,6 +88,9 @@ function stripInlineTags(text: string): string {
 // 모델이 여기서부터 딴 사람 대사를 쓰기 시작했다는 신호들.
 // stopSequences 로 대부분 막히지만 새어 나온 것도 잘라낸다.
 const CUT_MARKERS = [
+  "<memo",
+  "<done>",
+  "<undo>",
   "<past>",
   "<now>",
   "<want>",
